@@ -46,19 +46,20 @@ SAMPLE_P = {"ava": 0.34, "aadb": 0.22, "spaq": 0.16, "koniq": 0.08, "synth": 0.2
 SYNTH_ONLY = ["framing", "level", "color_accuracy"]
 
 
-def load(dev):
+def load(dev, feat=FEAT, g_key="g", use_l=True, only=None):
     D, synth_pairs = {}, {"train": [], "test": []}
-    offset_note = []
     for name in LABEL_MAP:
-        p = os.path.join(FEAT, f"{name}.npz")
+        if only and name not in only:
+            continue
+        p = os.path.join(feat, f"{name}.npz")
         if not os.path.exists(p):
             print(f"  (no features for {name} yet - skipping)")
             continue
         z = np.load(p)
         n = len(z["key"])
-        g = torch.tensor(z["g"].astype(np.float32))
-        has_l = "l" in z.files
-        l = torch.tensor(z["l"].astype(np.float32)) if has_l else torch.zeros(n, N_LOCAL, L_DIM)
+        g = torch.tensor(z[g_key].astype(np.float32))
+        has_l = "l" in z.files and use_l
+        l = torch.tensor(z["l"].astype(np.float32)) if has_l else torch.zeros(n, N_LOCAL, z["l"].shape[-1] if "l" in z.files else L_DIM)
         h = torch.tensor(z["h"])
         split, eff, sev, key = z["split"], z["effect"], z["severity"], z["key"]
         orig = eff == ""
@@ -188,13 +189,16 @@ def evaluate(model, D, synth_pairs, dev):
     return rep
 
 
-def main(steps=9000, B=384, lr=6e-4, seed=0):
+def main(steps=9000, B=384, lr=6e-4, seed=0, feat=FEAT, out=CKPT, g_key="g", use_l=True, h_keys=None, only=None, quiet=False, extra_meta=None):
+    """feat/out/g_key/h_keys let the same recipe train other backbones (see mobile/)."""
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
-    D, synth_pairs = load(dev)
+    D, synth_pairs = load(dev, feat, g_key, use_l, only)
     print(f"  synthetic pairs: {len(synth_pairs['train'])} train / {len(synth_pairs['test'])} test")
-    model = TwinJudge().to(dev)
+    first = next(iter(D.values()))
+    arch = dict(g_dim=int(first["g"].shape[-1]), l_dim=int(first["l"].shape[-1]), h_keys=h_keys, g_key=g_key, use_l=bool(use_l))
+    model = TwinJudge(arch["g_dim"], arch["l_dim"], h_keys).to(dev)
     # standardise measured signals on the pooled training data
     H = torch.cat([d["h"][d["train_idx"]] for d in D.values()])
     med = H.median(0).values
@@ -223,7 +227,7 @@ def main(steps=9000, B=384, lr=6e-4, seed=0):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 2.0)
         opt.step(); sched.step()
-        if step % 1000 == 0 or step == steps - 1:
+        if not quiet and (step % 1000 == 0 or step == steps - 1):
             print(f"step {step:5d}  loss {loss.item():.4f}  ({time.time() - t0:.0f}s)", flush=True)
 
     rep = evaluate(model, D, synth_pairs, dev)
@@ -241,11 +245,13 @@ def main(steps=9000, B=384, lr=6e-4, seed=0):
         model.q_table.copy_(torch.quantile(pool, torch.linspace(0, 1, 101), dim=0).T.contiguous())
         model.ref_mean.copy_(pool.mean(0)); model.ref_std.copy_(pool.std(0))
 
-    os.makedirs(os.path.dirname(CKPT), exist_ok=True)
-    meta = dict(report=rep, heads=HEAD_NAMES, datasets={n: int(d["n"]) for n, d in D.items()},
-                pool_size=int(len(pool)), steps=steps, trained=time.strftime("%Y-%m-%d %H:%M"))
-    torch.save(dict(state=model.state_dict(), meta=meta), CKPT)
-    json.dump(meta, open(os.path.join(os.path.dirname(CKPT), "report.json"), "w"), indent=1)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    meta = dict(report=rep, heads=HEAD_NAMES, datasets={n: int(d["n"]) for n, d in D.items()}, arch=arch,
+                pool_size=int(len(pool)), steps=steps, trained=time.strftime("%Y-%m-%d %H:%M"), **(extra_meta or {}))
+    torch.save(dict(state=model.state_dict(), meta=meta), out)
+    json.dump(meta, open(os.path.splitext(out)[0].replace("twin_judge", "report") + ".json" if out == CKPT else os.path.splitext(out)[0] + ".report.json", "w"), indent=1)
+    if quiet:
+        return rep
 
     print("\n=== held-out results (test images never seen in training) ===")
     for k, v in rep.items():
@@ -254,7 +260,8 @@ def main(steps=9000, B=384, lr=6e-4, seed=0):
     print("  synthetic clean-vs-fault pairs (overall acc / right-attribute acc):")
     for e, v in rep["synth"].items():
         print(f"    {e:16s} {v['overall_acc']:.3f} / {v['attr_acc'] if v['attr_acc'] is None else round(v['attr_acc'], 3)}   n={v['n']}")
-    print(f"saved -> {CKPT}")
+    print(f"saved -> {out}")
+    return rep
 
 
 if __name__ == "__main__":

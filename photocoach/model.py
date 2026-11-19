@@ -59,14 +59,25 @@ CKPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 
 
 class Tower(nn.Module):
-    """Scores ONE photo on all K attributes from (global embed, local embeds, measured signals)."""
+    """Scores ONE photo on all K attributes from (global embed, local embeds, measured signals).
 
-    def __init__(self, n_h: int = len(VEC_KEYS), width: int = 640, p: float = 0.25):
+    g_dim / l_dim follow the backbone (768 / 512 for the desktop CLIP pair, 512 / 512 for a
+    single phone-sized encoder).  h_keys picks which measured signals the tower may use;
+    an empty list makes it a pure image-encoder model, which is simpler to port.
+    """
+
+    def __init__(self, g_dim: int = G_DIM, l_dim: int = L_DIM, h_keys: list | None = None, width: int = 640, p: float = 0.25):
         super().__init__()
+        h_keys = list(VEC_KEYS) if h_keys is None else list(h_keys)
+        n_h = len(VEC_KEYS)
+        self.g_dim, self.l_dim = g_dim, l_dim
         self.register_buffer("h_mean", torch.zeros(n_h))
         self.register_buffer("h_std", torch.ones(n_h))
-        self.g_in = nn.Sequential(nn.Linear(G_DIM, width), nn.GELU(), nn.Dropout(p))
-        self.l_in = nn.Sequential(nn.Linear(2 * L_DIM, 256), nn.GELU(), nn.Dropout(p))
+        use = torch.zeros(n_h)
+        use[[VEC_KEYS.index(k) for k in h_keys]] = 1.0
+        self.register_buffer("h_use", use)
+        self.g_in = nn.Sequential(nn.Linear(g_dim, width), nn.GELU(), nn.Dropout(p))
+        self.l_in = nn.Sequential(nn.Linear(2 * l_dim, 256), nn.GELU(), nn.Dropout(p))
         self.h_in = nn.Sequential(nn.Linear(n_h, 64), nn.GELU())
         self.trunk = nn.Sequential(
             nn.Linear(width + 256 + 64 + 1, width), nn.GELU(), nn.Dropout(p),
@@ -75,20 +86,20 @@ class Tower(nn.Module):
         self.out = nn.Linear(384, K)
 
     def forward(self, g, l, h, has_l):
-        """g (N,768)  l (N,4,512)  h (N,n_h)  has_l (N,) in {0,1}  ->  (N,K)"""
-        g = F.normalize(g.float(), dim=-1) * (G_DIM ** 0.5)
-        l = F.normalize(l.float(), dim=-1) * (L_DIM ** 0.5)
+        """g (N,g_dim)  l (N,4,l_dim)  h (N,n_h)  has_l (N,) in {0,1}  ->  (N,K)"""
+        g = F.normalize(g.float(), dim=-1) * (self.g_dim ** 0.5)
+        l = F.normalize(l.float(), dim=-1) * (self.l_dim ** 0.5)
         lf = torch.cat([l.mean(1), l.std(1)], dim=-1)
-        hz = ((h.float() - self.h_mean) / self.h_std).clamp(-6, 6)
+        hz = ((h.float() - self.h_mean) / self.h_std).clamp(-6, 6) * self.h_use
         m = has_l.float().unsqueeze(-1)
         x = torch.cat([self.g_in(g), self.l_in(lf) * m, self.h_in(hz), m], dim=-1)
         return self.out(self.trunk(x))
 
 
 class TwinJudge(nn.Module):
-    def __init__(self):
+    def __init__(self, g_dim: int = G_DIM, l_dim: int = L_DIM, h_keys: list | None = None):
         super().__init__()
-        self.tower = Tower()
+        self.tower = Tower(g_dim, l_dim, h_keys)
         self.log_scale = nn.Parameter(torch.zeros(K))          # per-attribute comparison sharpness
         # calibration tables filled in after training
         self.register_buffer("q_table", torch.zeros(K, 101))   # score quantiles over the reference pool
@@ -121,6 +132,7 @@ class TwinJudge(nn.Module):
 
 def load_judge(path: str = CKPT, device: str = "cpu") -> tuple[TwinJudge, dict]:
     ck = torch.load(path, map_location="cpu", weights_only=False)
-    m = TwinJudge()
-    m.load_state_dict(ck["state"])
+    arch = ck.get("meta", {}).get("arch", {})          # absent in checkpoints of the original desktop model
+    m = TwinJudge(arch.get("g_dim", G_DIM), arch.get("l_dim", L_DIM), arch.get("h_keys"))
+    m.load_state_dict(ck["state"], strict=False)       # older checkpoints have no h_use buffer (= use all)
     return m.to(device).eval(), ck.get("meta", {})

@@ -6,7 +6,7 @@ __pycache__/
 
 # training data, cached features, logs and screenshots are large and reproducible
 data/raw/
-data/features/
+data/features*/
 data/logs/
 data/shots/
 

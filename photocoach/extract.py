@@ -26,7 +26,9 @@ from . import signals, synth
 from .backbone import Backbone, global_view, load_image, local_views
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RAW = os.path.join(ROOT, "data", "raw")
+# the downloads are large; PHOTOCOACH_DATA can point at a folder outside the repo that holds raw/ and pros/
+DATA = os.environ.get("PHOTOCOACH_DATA", os.path.join(ROOT, "data"))
+RAW = os.path.join(DATA, "raw")
 FEAT = os.path.join(ROOT, "data", "features")
 
 AADB_ATTRS = ["score", "BalacingElements", "ColorHarmony", "Content", "DoF", "Light", "MotionBlur",
@@ -111,7 +113,9 @@ def src_ava(n_train=70000, n_test=8000, seed=0):
 
 
 def src_pros():
-    d = os.path.join(ROOT, "dataset", "professional_images")
+    d = os.path.join(DATA, "pros")
+    if not os.path.isdir(d):
+        d = os.path.join(os.path.dirname(DATA), "dataset", "professional_images")
     names = sorted(f for f in os.listdir(d) if f.lower().endswith((".jpg", ".jpeg", ".png")))
     seen = set()
     for i, f in enumerate(names):
