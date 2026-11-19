@@ -1,0 +1,268 @@
+{
+ "report": {
+  "ava/aesthetic": {
+   "srcc": 0.7255661829166297,
+   "n": 7999,
+   "pair_acc_clear": 0.8889334001001502,
+   "pair_acc_all": 0.7648764876487649
+  },
+  "aadb/aesthetic": {
+   "srcc": 0.6899298852444012,
+   "n": 1127,
+   "pair_acc_clear": 0.861428702094576,
+   "pair_acc_all": 0.7669876939539861
+  },
+  "aadb/balance": {
+   "srcc": 0.25154950346112676,
+   "n": 1127,
+   "pair_acc_clear": 0.6640295358649789,
+   "pair_acc_all": 0.60539496279336
+  },
+  "aadb/thirds": {
+   "srcc": 0.23121483160046105,
+   "n": 1127,
+   "pair_acc_clear": 0.6294718909710392,
+   "pair_acc_all": 0.599043125789089
+  },
+  "aadb/subject_emphasis": {
+   "srcc": 0.6729059400549094,
+   "n": 1127,
+   "pair_acc_clear": 0.8637015781922525,
+   "pair_acc_all": 0.7697077059344553
+  },
+  "aadb/symmetry": {
+   "srcc": 0.20982763357713627,
+   "n": 1127,
+   "pair_acc_clear": 0.7075598601022329,
+   "pair_acc_all": 0.7063875469672571
+  },
+  "aadb/repetition": {
+   "srcc": 0.3765772840861221,
+   "n": 1127,
+   "pair_acc_clear": 0.765572774232756,
+   "pair_acc_all": 0.7647861692447679
+  },
+  "aadb/lighting": {
+   "srcc": 0.4621391066658398,
+   "n": 1127,
+   "pair_acc_clear": 0.7509585710277752,
+   "pair_acc_all": 0.6966632962588474
+  },
+  "aadb/color_harmony": {
+   "srcc": 0.4700214170930794,
+   "n": 1127,
+   "pair_acc_clear": 0.7518117844764205,
+   "pair_acc_all": 0.6957082335605084
+  },
+  "aadb/vivid_color": {
+   "srcc": 0.6409343290272637,
+   "n": 1127,
+   "pair_acc_clear": 0.8294667590027701,
+   "pair_acc_all": 0.7624389676819344
+  },
+  "aadb/depth_of_field": {
+   "srcc": 0.5172329810525368,
+   "n": 1127,
+   "pair_acc_clear": 0.8455262442208322,
+   "pair_acc_all": 0.7372703043905176
+  },
+  "aadb/motion_blur": {
+   "srcc": 0.15873362886517828,
+   "n": 1127,
+   "pair_acc_clear": 0.6401062416998672,
+   "pair_acc_all": 0.6403450564034505
+  },
+  "aadb/content": {
+   "srcc": 0.5764033086395497,
+   "n": 1127,
+   "pair_acc_clear": 0.8120186461289015,
+   "pair_acc_all": 0.7272829320312062
+  },
+  "spaq/technical": {
+   "srcc": 0.9033207019168447,
+   "n": 2225,
+   "pair_acc_clear": 0.9848277212216131,
+   "pair_acc_all": 0.8580225281602003
+  },
+  "spaq/exposure": {
+   "srcc": 0.8004941812924798,
+   "n": 2225,
+   "pair_acc_clear": 0.9393126225616679,
+   "pair_acc_all": 0.8046777182350879
+  },
+  "spaq/contrast": {
+   "srcc": 0.7961967332821795,
+   "n": 2225,
+   "pair_acc_clear": 0.9340548194598969,
+   "pair_acc_all": 0.7985683536066477
+  },
+  "spaq/vivid_color": {
+   "srcc": 0.7754373615486864,
+   "n": 2225,
+   "pair_acc_clear": 0.9236281736281736,
+   "pair_acc_all": 0.7870987128762458
+  },
+  "spaq/sharpness": {
+   "srcc": 0.9080559060360384,
+   "n": 2225,
+   "pair_acc_clear": 0.9881511946729338,
+   "pair_acc_all": 0.8633792240300375
+  },
+  "spaq/noise": {
+   "srcc": 0.8323363796672723,
+   "n": 2225,
+   "pair_acc_clear": 0.9511355815554026,
+   "pair_acc_all": 0.8140547574953702
+  },
+  "koniq/technical": {
+   "srcc": 0.8727071908462373,
+   "n": 2015,
+   "pair_acc_clear": 0.9747017233760495,
+   "pair_acc_all": 0.8418867547018808
+  },
+  "synth": {
+   "bad_crop": {
+    "overall_acc": 0.9333333333333333,
+    "attr_acc": 1.0,
+    "n": 15
+   },
+   "crushed_shadows": {
+    "overall_acc": 0.9411764705882353,
+    "attr_acc": 1.0,
+    "n": 17
+   },
+   "defocus": {
+    "overall_acc": 1.0,
+    "attr_acc": 1.0,
+    "n": 13
+   },
+   "desaturate": {
+    "overall_acc": 0.7368421052631579,
+    "attr_acc": 0.7894736842105263,
+    "n": 19
+   },
+   "flat_contrast": {
+    "overall_acc": 0.9230769230769231,
+    "attr_acc": 1.0,
+    "n": 13
+   },
+   "harsh_contrast": {
+    "overall_acc": 0.9411764705882353,
+    "attr_acc": 1.0,
+    "n": 17
+   },
+   "jpeg": {
+    "overall_acc": 1.0,
+    "attr_acc": null,
+    "n": 16
+   },
+   "motion_blur": {
+    "overall_acc": 0.9285714285714286,
+    "attr_acc": 1.0,
+    "n": 14
+   },
+   "noise": {
+    "overall_acc": 1.0,
+    "attr_acc": 1.0,
+    "n": 8
+   },
+   "overexpose": {
+    "overall_acc": 0.8421052631578947,
+    "attr_acc": 0.6842105263157895,
+    "n": 19
+   },
+   "oversaturate": {
+    "overall_acc": 0.9090909090909091,
+    "attr_acc": 0.8181818181818182,
+    "n": 11
+   },
+   "tilt": {
+    "overall_acc": 1.0,
+    "attr_acc": 1.0,
+    "n": 15
+   },
+   "underexpose": {
+    "overall_acc": 1.0,
+    "attr_acc": 1.0,
+    "n": 6
+   },
+   "wb_cool": {
+    "overall_acc": 0.9411764705882353,
+    "attr_acc": 0.8823529411764706,
+    "n": 17
+   },
+   "wb_tint": {
+    "overall_acc": 0.9411764705882353,
+    "attr_acc": 1.0,
+    "n": 17
+   },
+   "wb_warm": {
+    "overall_acc": 1.0,
+    "attr_acc": 1.0,
+    "n": 11
+   }
+  }
+ },
+ "heads": [
+  "aesthetic",
+  "technical",
+  "balance",
+  "thirds",
+  "subject_emphasis",
+  "framing",
+  "level",
+  "symmetry",
+  "repetition",
+  "lighting",
+  "exposure",
+  "contrast",
+  "color_harmony",
+  "vivid_color",
+  "color_accuracy",
+  "depth_of_field",
+  "sharpness",
+  "motion_blur",
+  "noise",
+  "content"
+ ],
+ "datasets": {
+  "ava": 77999,
+  "aadb": 9958,
+  "spaq": 13279,
+  "koniq": 11759,
+  "pros": 1940
+ },
+ "arch": {
+  "g_dim": 512,
+  "l_dim": 512,
+  "h_keys": [
+   "luma_mean",
+   "luma_median",
+   "luma_p01",
+   "luma_p05",
+   "luma_p95",
+   "luma_p99",
+   "clip_hi",
+   "clip_lo",
+   "near_hi",
+   "near_lo",
+   "contrast_rms",
+   "dyn_range",
+   "sat_mean",
+   "colorfulness",
+   "cast_a",
+   "cast_b",
+   "neutral_cast_a",
+   "neutral_cast_b",
+   "log_long_side",
+   "aspect"
+  ],
+  "g_key": "g_sq",
+  "use_l": true
+ },
+ "pool_size": 31544,
+ "steps": 9000,
+ "trained": "2026-11-19 10:06",
+ "encoder": "mobileclip2_s0",
+ "signals": "easy"
+}
