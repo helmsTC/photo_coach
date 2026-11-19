@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Coach</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#111110; --surface:#1a1a19; --surface2:#232321; --line:#33332f;
+  --text:#f0efec; --text2:#c3c2b7; --muted:#8f8e85;
+  --a:#3987e5; --b:#d95926;            /* series: photo A / photo B (validated categorical slots 1,2) */
+  --good:#199e70; --warn:#c98500; --bad:#e66767;
+  --radius:12px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:24px 16px 80px}
+h1{font-size:22px;margin:0;letter-spacing:-.01em}
+h2{font-size:18px;margin:0 0 4px;letter-spacing:-.01em}
+h3{font-size:15px;margin:0 0 6px}
+p{margin:0 0 8px}
+.sub{color:var(--text2);margin:2px 0 20px}
+.muted{color:var(--muted)} .small{font-size:13px}
+section{margin-top:36px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+button{font:inherit;color:var(--text);background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover{border-color:var(--muted)}
+button.primary{background:var(--text);color:#111;border-color:var(--text);font-weight:600;padding:10px 22px}
+button.primary:disabled{opacity:.35;cursor:not-allowed}
+button[aria-pressed=true]{background:var(--text);color:#111;border-color:var(--text)}
+input[type=text]{font:inherit;color:var(--text);background:transparent;border:0;border-bottom:1px solid var(--line);padding:2px 0;width:100%;font-weight:600}
+input[type=text]:focus{outline:0;border-color:var(--text2)}
+.sw{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:baseline}
+.sw.a{background:var(--a)} .sw.b{background:var(--b)}
+
+/* upload */
+.drop{position:relative;border:1.5px dashed var(--line);border-radius:var(--radius);min-height:230px;display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;overflow:hidden;background:var(--surface)}
+.drop.over{border-color:var(--text)}
+.drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+.drop .hint{padding:20px;color:var(--text2)}
+.drop input{display:none}
+.namerow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.go{display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap}
+.spinner{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--text);border-radius:50%;animation:sp 0.8s linear infinite;display:inline-block;vertical-align:-4px;margin-right:8px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.err{color:var(--bad)}
+
+/* verdict */
+.verdict{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+@media(max-width:760px){.verdict{grid-template-columns:1fr}}
+.pcard{position:relative;padding:0;overflow:hidden}
+.pcard img{display:block;width:100%;max-height:420px;object-fit:contain;background:#000}
+.pcard .body{padding:14px 16px}
+.pcard.win{border-color:var(--text)}
+.badge{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:99px;background:var(--text);color:#111;margin-left:8px;vertical-align:2px}
+.tiles{display:flex;gap:22px;margin-top:8px;flex-wrap:wrap}
+.tile .n{font-size:30px;font-weight:650;letter-spacing:-.02em;line-height:1.1}
+.tile.big .n{font-size:44px}
+.tile .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.hero{margin-bottom:16px}
+.hero .hl{font-size:28px;font-weight:650;letter-spacing:-.02em}
+.chip{display:inline-block;font-size:12px;border:1px solid var(--line);border-radius:99px;padding:2px 10px;color:var(--text2);margin-right:6px}
+.confbar{height:8px;border-radius:4px;background:var(--b);overflow:hidden;margin:8px 0 4px;max-width:520px}
+.confbar i{display:block;height:100%;background:var(--a);border-right:2px solid var(--surface)}
+
+/* evidence viewer */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.viewer{align-items:start}
+.viewer img{display:block;width:100%;border-radius:8px;background:#000;max-height:520px;object-fit:contain}
+.viewer .cap{font-size:13px;color:var(--text2);margin-top:6px}
+.legend{font-size:13px;color:var(--text2);margin-top:10px}
+.key{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 5px 0 12px}
+
+/* attribute dumbbells */
+.attr-group{margin-top:14px}
+.attr-group h3{color:var(--text2);font-size:12px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.row{display:grid;grid-template-columns:210px 1fr 44px 44px;gap:10px;align-items:center;padding:5px 0;border-radius:6px}
+.row:hover{background:var(--surface2)}
+.row .nm{font-size:14px}
+.row .v{font-variant-numeric:tabular-nums;text-align:right;font-size:13px;color:var(--text2)}
+.row.unrel .nm{color:var(--muted)}
+.track{position:relative;height:22px}
+.track::before{content:"";position:absolute;left:0;right:0;top:10px;height:1px;background:var(--line)}
+.track .mid{position:absolute;left:50%;top:5px;height:12px;width:1px;background:var(--line)}
+.track .link{position:absolute;top:9px;height:3px;background:var(--muted);opacity:.55;border-radius:2px}
+.track .dot{position:absolute;top:4px;width:14px;height:14px;margin-left:-7px;border-radius:50%;border:2px solid var(--surface)}
+.row:hover .track .dot{border-color:var(--surface2)}
+.dot.a{background:var(--a)} .dot.b{background:var(--b)}
+.axis{display:grid;grid-template-columns:210px 1fr 44px 44px;gap:10px;font-size:12px;color:var(--muted)}
+.axis .sc{display:flex;justify-content:space-between}
+@media(max-width:640px){.row,.axis{grid-template-columns:130px 1fr 34px 34px}}
+#tip{position:fixed;pointer-events:none;background:#000;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;max-width:320px;z-index:9;display:none;box-shadow:0 6px 24px #0008}
+
+/* coaching */
+.coach{display:grid;gap:12px}
+.item{border-left:3px solid var(--line)}
+.item.p1{border-left-color:var(--bad)} .item.p2{border-left-color:var(--warn)}
+.item .hd{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.item .num{color:var(--muted);font-variant-numeric:tabular-nums}
+.item h3{font-size:16px;margin:0}
+.tag{white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-radius:4px;padding:1px 7px;border:1px solid var(--line);color:var(--text2)}
+.item ul{margin:4px 0 8px;padding-left:20px}
+.item li{margin:2px 0}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:8px}
+@media(max-width:760px){.cols{grid-template-columns:1fr}}
+.lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+
+/* preview */
+.cmp{position:relative;overflow:hidden;border-radius:8px;background:#000;user-select:none;touch-action:none}
+.cmp img{display:block;width:100%}
+.cmp .top{position:absolute;inset:0;overflow:hidden}
+.cmp .top img{height:100%;width:auto;max-width:none}
+.cmp .bar{position:absolute;top:0;bottom:0;width:2px;background:#fff;cursor:ew-resize}
+.cmp .bar::after{content:"◂ ▸";position:absolute;top:50%;left:-17px;width:36px;text-align:center;background:#fff;color:#111;border-radius:99px;font-size:11px;line-height:20px;transform:translateY(-50%)}
+.cmp .tagl,.cmp .tagr{position:absolute;top:8px;background:#000a;padding:2px 8px;border-radius:99px;font-size:12px}
+.cmp .tagl{left:8px}.cmp .tagr{right:8px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+td,th{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+.meter{height:10px;border-radius:5px;background:var(--surface2);overflow:hidden;margin:6px 0}
+.meter i{display:block;height:100%;background:var(--good)}
+.pal{display:flex;height:26px;border-radius:6px;overflow:hidden;margin:4px 0 12px}
+.pal i{display:block;border-right:2px solid var(--surface)} .pal i:last-child{border:0}
+svg text{fill:var(--muted);font-size:11px}
+details{margin-top:10px} summary{cursor:pointer;color:var(--text2)}
+.hidden{display:none}
+.tag.role-subject{border-color:#ffc828;color:#ffc828}.tag.role-distraction{border-color:#ff503c;color:#ff8a78}.tag.role-helps{border-color:#28d296;color:#28d296}
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo Coach</h1>
+  <p class="sub">Drop in two photos. A twin network judges which is stronger, shows why, and tells you what to change to close the gap.</p>
+
+  <div class="grid2">
+    <div>
+      <div class="namerow"><span class="sw a"></span><input type="text" id="name_a" value="My photo" aria-label="Name of first photo"></div>
+      <label class="drop" id="drop_a"><input type="file" accept="image/*" id="file_a"><div class="hint">Drop a photo here or click to choose<br><span class="muted small">e.g. your shot</span></div></label>
+    </div>
+    <div>
+      <div class="namerow"><span class="sw b"></span><input type="text" id="name_b" value="Reference" aria-label="Name of second photo"></div>
+      <label class="drop" id="drop_b"><input type="file" accept="image/*" id="file_b"><div class="hint">Drop a photo here or click to choose<br><span class="muted small">e.g. a professional's photo of the same view</span></div></label>
+    </div>
+  </div>
+  <div class="go">
+    <button class="primary" id="go" disabled>Compare</button>
+    <span id="status" class="muted"></span>
+  </div>
+
+  <div id="out" class="hidden">
+    <section id="s_verdict"></section>
+    <section id="s_coach"></section>
+    <section id="s_view"></section>
+    <section id="s_attr"></section>
+    <section id="s_edit"></section>
+    <section id="s_meas"></section>
+    <section id="s_about"></section>
+  </div>
+</main>
+<div id="tip"></div>
+
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const el = (tag, attrs={}, ...kids) => { const e = document.createElement(tag); for (const k in attrs) { if (k==='class') e.className = attrs[k]; else if (k==='html') e.innerHTML = attrs[k]; else if (k.startsWith('on')) e.addEventListener(k.slice(2), attrs[k]); else e.setAttribute(k, attrs[k]); } for (const c of kids.flat()) if (c!=null) e.append(c.nodeType ? c : document.createTextNode(c)); return e; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const files = {a:null, b:null};
+let R = null, overlay = 'photo';
+
+for (const k of ['a','b']) {
+  const drop = $('#drop_'+k), inp = $('#file_'+k);
+  const set = f => { if (!f || !f.type.startsWith('image/')) return; files[k] = f; drop.querySelectorAll('img').forEach(i=>i.remove()); const im = el('img', {alt:''}); im.src = URL.createObjectURL(f); drop.append(im); $('#go').disabled = !(files.a && files.b); };
+  inp.addEventListener('change', () => set(inp.files[0]));
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); set(e.dataTransfer.files[0]); });
+}
+
+$('#go').addEventListener('click', async () => {
+  const fd = new FormData();
+  fd.append('a', files.a); fd.append('b', files.b);
+  fd.append('name_a', $('#name_a').value); fd.append('name_b', $('#name_b').value);
+  $('#go').disabled = true;
+  $('#status').className = 'muted';
+  $('#status').innerHTML = '<span class="spinner"></span>Analysing both photos… (about 10 s)';
+  try {
+    const r = await fetch('/api/compare', {method:'POST', body:fd});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Server error');
+    show(j);
+    $('#s_verdict').scrollIntoView({behavior:'smooth'});
+  } catch (e) { $('#status').className = 'err'; $('#status').textContent = e.message; }
+  $('#go').disabled = false;
+});
+
+function show(j) { R = j; overlay = new URLSearchParams(location.search).get('overlay') || 'photo'; render(); $('#status').textContent = `Done in ${j.seconds}s`; $('#out').classList.remove('hidden'); }
+{ const q = new URLSearchParams(location.search);
+  if (q.get('a') && q.get('b')) { $('#status').innerHTML = '<span class="spinner"></span>Analysing sample photos…';
+    fetch('/api/sample?' + q).then(r => r.json()).then(j => { if (j.error) throw new Error(j.error); show(j); }).catch(e => { $('#status').className = 'err'; $('#status').textContent = e.message; }); } }
+const img = name => `/img/${R.id}/${name}.jpg`;
+const sw = k => `<span class="sw ${k}"></span>`;
+const fmtShutter = t => t < 0.4 ? `1/${Math.round(1/t)}s` : `${t.toFixed(1)}s`;
+
+function render() {
+  renderVerdict(); renderCoach(); renderViewer(); renderAttrs(); renderEdit(); renderMeasured(); renderAbout();
+}
+
+function renderVerdict() {
+  const s = $('#s_verdict'); s.innerHTML = '';
+  const W = R.photos[R.winner], pa = Math.round(R.p_a*100);
+  s.append(el('div', {class:'hero'},
+    el('div', {class:'hl'}, R.headline),
+    el('p', {class:'sub', style:'margin-bottom:6px'}, R.summary + (R.close_call ? ' This is a close call - treat the verdict as a coin-flip and read the attribute breakdown instead.' : '')),
+    el('div', {class:'confbar', title:`${R.photos.a.name} ${pa}% / ${R.photos.b.name} ${100-pa}%`}, el('i', {style:`width:${pa}%`})),
+    el('div', {class:'small muted', html:`${sw('a')}${esc(R.photos.a.name)} preferred ${pa}% &nbsp;·&nbsp; ${sw('b')}${esc(R.photos.b.name)} ${100-pa}% &nbsp;<span class="muted">(model's estimate of how often viewers would pick each)</span>`}),
+    el('div', {style:'margin-top:10px'}, el('span', {class:'chip'}, {aligned:'Same scene matched', similar:'Similar subject', different:'Different scenes'}[R.relation.kind]), el('span', {class:'small muted'}, R.relation.text))
+  ));
+  const v = el('div', {class:'verdict'});
+  for (const k of ['a','b']) {
+    const p = R.photos[k];
+    v.append(el('div', {class:'card pcard' + (k===R.winner ? ' win':'')},
+      el('img', {src:img(k+'_photo'), alt:p.name}),
+      el('div', {class:'body'},
+        el('div', {html:`${sw(k)}<strong>${esc(p.name)}</strong>` + (k===R.winner ? '<span class="badge">Winner</span>' : '')}),
+        el('div', {class:'tiles'},
+          el('div', {class:'tile big'}, el('div', {class:'n'}, Math.round(p.overall)), el('div', {class:'l'}, 'Overall')),
+          el('div', {class:'tile'}, el('div', {class:'n'}, Math.round(p.aesthetic)), el('div', {class:'l'}, 'Aesthetic')),
+          el('div', {class:'tile'}, el('div', {class:'n'}, Math.round(p.technical)), el('div', {class:'l'}, 'Technical'))),
+        el('div', {class:'small muted', style:'margin-top:6px'}, exifLine(p)))));
+  }
+  s.append(v, el('p', {class:'small muted', style:'margin-top:8px'}, `Scores are percentiles: 50 is a typical photo, 90 beats nine in ten of the ${R.model.pool ? R.model.pool.toLocaleString() : ''} human-rated reference photos.`));
+  if (R.reasons.length || R.loser_leads.length) {
+    const L = R.photos[R.loser];
+    s.append(el('div', {class:'grid2', style:'margin-top:16px'},
+      el('div', {class:'card'}, el('h3', {}, `Why ${W.name} won`), el('ul', {style:'margin:0;padding-left:20px'}, R.reasons.map(r => el('li', {}, r.text)))),
+      el('div', {class:'card'}, el('h3', {}, `Where ${L.name} is ahead`), R.loser_leads.length ? el('ul', {style:'margin:0;padding-left:20px'}, R.loser_leads.map(r => el('li', {}, r.text))) : el('p', {class:'muted'}, 'Nowhere by a meaningful margin.'))));
+  }
+}
+
+function exifLine(p) {
+  const e = p.exif || {}, b = [];
+  if (e.camera) b.push(e.camera);
+  if (e.focal35 || e.focal) b.push(`${e.focal35 || e.focal}mm`);
+  if (e.aperture) b.push(`f/${e.aperture}`);
+  if (e.shutter) b.push(fmtShutter(e.shutter));
+  if (e.iso) b.push(`ISO ${e.iso}`);
+  return (b.length ? b.join(' · ') : 'No camera settings in file') + ` · ${p.size[0]}×${p.size[1]}`;
+}
+
+const FIX = {edit:'Fixable in editing', reshoot:'Needs a reshoot', both:'Shoot + edit'};
+function renderCoach() {
+  const s = $('#s_coach'); s.innerHTML = '';
+  const L = R.photos[R.loser], W = R.photos[R.winner];
+  s.append(el('h2', {}, `How to get ${L.name} closer to ${W.name}`), el('p', {class:'sub'}, 'Ordered by how much each issue separates the two photos. Every point is tied to a network score gap or a measurement.'));
+  if (!R.coaching.length) { s.append(el('div', {class:'card'}, 'No single weakness stands out - the photos differ by small margins across the board. Look at the attribute breakdown below.')); return; }
+  const box = el('div', {class:'coach'});
+  R.coaching.forEach((it, i) => {
+    box.append(el('div', {class:'card item ' + (i===0 ? 'p1' : i<3 ? 'p2' : '')},
+      el('div', {class:'hd'}, el('span', {class:'num'}, `${i+1}.`), el('h3', {}, it.title), el('span', {class:'tag'}, FIX[it.fix]),
+        it.overlay && OVER[it.overlay] ? el('button', {class:'small', onclick:()=>{ setOverlay(it.overlay); $('#s_view').scrollIntoView({behavior:'smooth'}); }}, `Show: ${OVER[it.overlay].label}`) : null),
+      it.evidence.length ? el('ul', {}, it.evidence.map(t => el('li', {}, t))) : null,
+      el('div', {class:'cols'},
+        it.shoot.length ? el('div', {}, el('div', {class:'lbl'}, 'At the shoot'), el('ul', {}, it.shoot.map(t => el('li', {}, t)))) : null,
+        it.edit.length ? el('div', {}, el('div', {class:'lbl'}, 'In the edit'), el('ul', {}, it.edit.map(t => el('li', {}, t)))) : null)));
+  });
+  s.append(box);
+}
+
+const OVER = {
+  photo:{label:'Photo', cap:''},
+  clip:{label:'Clipping', cap:'<span class="key" style="background:#ff2d3c"></span>blown highlights (pure white, no detail) <span class="key" style="background:#286eff"></span>crushed shadows (pure black)'},
+  focus:{label:'Focus map', cap:'Brighter = more fine detail. Both photos share one scale, so a dimmer map means a softer photo. A bright subject on a dark background is shallow depth of field.'},
+  comp:{label:'Composition', cap:'<span class="key" style="background:#ffc828"></span>strongest visual pull <span class="key" style="background:#5adcff"></span>centre of visual weight · white lines: rule-of-thirds grid · coloured line: detected horizon (red if tilted)'},
+  objects:{label:'Objects', cap:'Each outlined region is something the segmentation model found; numbers match the table below. <span class="key" style="background:#ffc828"></span>main subject <span class="key" style="background:#ff503c"></span>distraction - the score rises when it is painted out <span class="key" style="background:#28d296"></span>the score leans on it'},
+  impact:{label:'What carries the score', cap:'<span class="key" style="background:#28d296"></span>regions the aesthetic score leans on most <span class="key" style="background:#ff503c"></span>regions that add least (or pull it down). Found by hiding each region from the network and re-scoring; shown relative to the rest of the frame.'},
+  frame:{label:'Framing', cap:"The outlined box is the other photo's frame, located inside this one by matching the scene."},
+  hist:{label:'Histogram', cap:''}, palette:{label:'Colours', cap:''},
+};
+function setOverlay(o) { if (o==='hist' || o==='palette') { $('#s_meas').scrollIntoView({behavior:'smooth'}); return; } overlay = o; renderViewer(); }
+function renderViewer() {
+  const s = $('#s_view'); s.innerHTML = '';
+  s.append(el('h2', {}, 'Look at the evidence'), el('p', {class:'sub'}, 'Switch overlays to see what the measurements and the network are reacting to.'));
+  const avail = ['photo','clip','focus','comp','objects','impact','frame'].filter(o => o==='photo' || R.photos.a.overlays.includes(o) || R.photos.b.overlays.includes(o));
+  if (!avail.includes(overlay)) overlay = 'photo';
+  const OV = overlay;
+  s.append(el('div', {class:'tabs', role:'group'}, avail.map(o => el('button', {'aria-pressed': String(o===overlay), onclick:()=>{overlay=o; renderViewer();}}, OVER[o].label))));
+  const g = el('div', {class:'grid2 viewer'});
+  for (const k of ['a','b']) {
+    const p = R.photos[k], has = overlay==='photo' || p.overlays.includes(overlay);
+    g.append(el('div', {}, el('img', {src: img(k + '_' + (has ? overlay : 'photo')), alt:`${p.name} - ${OVER[overlay].label}`}), el('div', {class:'cap', html: sw(k) + esc(p.name) + viewerNote(k)})));
+  }
+  s.append(g, el('div', {class:'legend', html: OVER[overlay].cap}));
+  if (R.photos.a.objects.length || R.photos.b.objects.length) s.append(objectTables());
+}
+const ROLE = {subject:'Subject', distraction:'Distraction', helps:'Carries the score', other:''};
+function objectTables() {
+  const wrap = el('div', {style:'margin-top:18px'});
+  wrap.append(el('h3', {}, "What's in each frame"),
+    el('p', {class:'small muted', style:'margin:2px 0 10px'}, 'Each object was removed in turn and the photo re-scored by the same network. "Score without it" is the change in the aesthetic score (0-100): above zero means the photo does better without it. Small objects are painted out; large regions can only be blurred, so for those read the number as how much the score depends on them.'));
+  const g = el('div', {class:'grid2'});
+  for (const k of ['a','b']) {
+    const p = R.photos[k], sc = p.scene || {};
+    const rows = p.objects.map(o => { const d = o.delta, tr = el('tr', {},
+        el('td', {class:'muted'}, o.n), el('td', {}, o.label + (o.cut.length ? ' (cut off)' : '')), el('td', {class:'muted'}, o.where),
+        el('td', {class:'n'}, (100*o.area).toFixed(o.area < 0.1 ? 1 : 0) + '%'),
+        el('td', {class:'n'}, (d > 0 ? '+' : d < 0 ? '−' : '') + Math.abs(d).toFixed(0)),
+        el('td', {}, ROLE[o.role] ? el('span', {class:'tag role-' + o.role}, ROLE[o.role]) : ''));
+      tr.title = o.compact ? 'Painted out from its surroundings, then re-scored' : 'Too large to paint out: blurred, then re-scored';
+      return tr; });
+    const facts = [];
+    if (sc.subject) facts.push(`Subject: ${sc.subject.label}, ${sc.subject.where}, ${(100*sc.subject.area).toFixed(1)}% of the frame`);
+    else facts.push('No single object stands out as the subject');
+    if (sc.sky >= 0.03) facts.push(`sky ${(100*sc.sky).toFixed(0)}%`);
+    if (sc.water >= 0.03) facts.push(`water ${(100*sc.water).toFixed(0)}%`);
+    g.append(el('div', {class:'card'}, el('div', {html: sw(k) + '<strong>' + esc(p.name) + '</strong>'}), el('div', {class:'small muted', style:'margin:4px 0 8px'}, facts.join(' · ')),
+      rows.length ? el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, 'Object'), el('th', {}, 'Where'), el('th', {class:'n'}, 'Share of frame'), el('th', {class:'n'}, 'Score without it'), el('th', {}, ''))), el('tbody', {}, rows))
+                  : el('p', {class:'muted'}, 'Nothing recognisable was found.')));
+  }
+  wrap.append(g); return wrap;
+}
+function viewerNote(k) {
+  const m = R.photos[k].measured;
+  if (overlay==='clip') return ` — ${(100*m.clip_hi).toFixed(1)}% blown, ${(100*m.clip_lo).toFixed(1)}% crushed`;
+  if (overlay==='focus') return ` — edge crispness ${m.crispness.toFixed(2)}, focus spread ${m.focus_spread.toFixed(1)}`;
+  if (overlay==='objects') { const sc = R.photos[k].scene; return sc && sc.subject ? ` — subject: ${sc.subject.label}` : ' — no single subject'; }
+  if (overlay==='comp') return m.tilt_conf >= 0.3 ? ` — horizon ${Math.abs(m.tilt).toFixed(1)}° off level` : ' — no clear horizon found';
+  return '';
+}
+
+function renderAttrs() {
+  const s = $('#s_attr'); s.innerHTML = '';
+  s.append(el('h2', {}, 'Attribute by attribute'),
+    el('p', {class:'sub', html:`Where each photo stands among reference photos, 0–100. &nbsp;${sw('a')}${esc(R.photos.a.name)} &nbsp; ${sw('b')}${esc(R.photos.b.name)}`}));
+  const card = el('div', {class:'card'});
+  card.append(el('div', {class:'axis'}, el('span'), el('div', {class:'sc'}, el('span', {}, '0'), el('span', {}, '50 · typical'), el('span', {}, '100')), el('span', {class:'v', html:sw('a')}), el('span', {class:'v', html:sw('b')})));
+  let grp = null, box = null;
+  for (const a of R.attributes) {
+    if (a.group !== grp) { grp = a.group; box = el('div', {class:'attr-group'}, el('h3', {}, grp)); card.append(box); }
+    const lo = Math.min(a.a, a.b), hi = Math.max(a.a, a.b);
+    const row = el('div', {class:'row' + (a.reliable ? '' : ' unrel')},
+      el('div', {class:'nm'}, a.label + (a.reliable ? '' : ' *')),
+      el('div', {class:'track'}, el('i', {class:'mid'}), el('i', {class:'link', style:`left:${lo}%;width:${hi-lo}%`}), el('i', {class:'dot a', style:`left:${a.a}%`}), el('i', {class:'dot b', style:`left:${a.b}%`})),
+      el('div', {class:'v'}, Math.round(a.a)), el('div', {class:'v'}, Math.round(a.b)));
+    const val = a.validity && a.validity.metric ? (a.validity.metric==='srcc' ? `Agreement with human raters on unseen photos: ρ = ${a.validity.value}` : `Picks the clean photo over a deliberately faulted copy ${Math.round(a.validity.value*100)}% of the time`) : '';
+    tip(row, `<strong>${esc(a.label)}</strong><br>${esc(a.blurb)}<br><br>${sw('a')}${esc(R.photos.a.name)}: ${a.a.toFixed(0)}<br>${sw('b')}${esc(R.photos.b.name)}: ${a.b.toFixed(0)}<br><span class="muted">${val}${a.reliable ? '' : '<br>* Weak head - shown for reference, not used for advice.'}</span>`);
+    box.append(row);
+  }
+  s.append(card);
+  if (R.attributes.some(a => !a.reliable)) s.append(el('p', {class:'small muted', style:'margin-top:8px'}, '* The network predicts this attribute only weakly on held-out data; it is displayed but never used for coaching.'));
+  const st = R.style.map(x => `${x.label}: ${Math.round(x.a)} vs ${Math.round(x.b)}`).join(' · ');
+  s.append(el('p', {class:'small muted'}, `Style descriptors (not good/bad): ${st}`));
+}
+
+function tip(node, html) {
+  const t = $('#tip');
+  node.addEventListener('mousemove', e => { t.innerHTML = html; t.style.display = 'block'; const w = t.offsetWidth, h = t.offsetHeight; t.style.left = Math.min(innerWidth - w - 8, e.clientX + 14) + 'px'; t.style.top = Math.min(innerHeight - h - 8, e.clientY + 14) + 'px'; });
+  node.addEventListener('mouseleave', () => t.style.display = 'none');
+}
+
+function renderEdit() {
+  const s = $('#s_edit'); s.innerHTML = '';
+  const L = R.photos[R.loser], W = R.photos[R.winner], key = R.best_preview, pv = R.previews[key];
+  s.append(el('h2', {}, 'How far can editing alone take it?'),
+    el('p', {class:'sub'}, `${L.name} with ${key==='crop_edit' ? "the winner's crop and " : ''}the winner's tone${R.recipe.color_ok ? ' and colour' : ''} applied as simple global adjustments, then re-scored by the same network. Drag the divider.`));
+  const cmp = el('div', {class:'cmp'});
+  const base = el('img', {src:img('preview_'+key), alt:'Edited preview'});
+  const top = el('div', {class:'top'}, el('img', {src: img(key==='crop_edit' ? 'preview_crop_edit' : R.loser+'_photo'), alt:'Original'}));
+  const bar = el('div', {class:'bar'});
+  cmp.append(base, top, bar, el('span', {class:'tagl'}, 'Original'), el('span', {class:'tagr'}, 'Edited toward winner'));
+  // for the crop preview there is no pixel-aligned original, so compare against the plain edit instead
+  if (key==='crop_edit') { top.firstChild.src = img('preview_crop_edit'); top.firstChild.style.filter = 'none'; cmp.querySelector('.tagl').textContent = ''; top.style.display='none'; bar.style.display='none'; }
+  const setX = f => { f = Math.max(0, Math.min(1, f)); top.style.width = (f*100)+'%'; bar.style.left = `calc(${f*100}% - 1px)`; top.firstChild.style.width = cmp.clientWidth+'px'; top.firstChild.style.height = 'auto'; };
+  base.addEventListener('load', () => setX(0.5));
+  const move = e => { const r = cmp.getBoundingClientRect(); setX((e.clientX - r.left)/r.width); };
+  cmp.addEventListener('pointerdown', e => { cmp.setPointerCapture(e.pointerId); move(e); cmp.onpointermove = move; });
+  cmp.addEventListener('pointerup', () => cmp.onpointermove = null);
+  addEventListener('resize', () => setX(parseFloat(top.style.width)/100 || 0.5));
+
+  const c = Math.max(0, Math.min(1, pv.closure)), pctTxt = Math.round(c*100);
+  const verdict = pv.closure <= 0.05 ? `Matching the winner's look does not raise the score - the gap is not about tone or colour. It comes from the things in the coaching list marked “needs a reshoot”.`
+    : pv.closure >= 0.9 ? `Editing alone closes essentially the whole gap. This is a processing difference, not a shooting difference.`
+    : `Editing closes about ${pctTxt}% of the gap (overall ${Math.round(L.overall)} → ${Math.round(pv.overall)}, winner ${Math.round(W.overall)}). The remaining ${100-pctTxt}% is light, timing, focus or composition - things decided when the shutter was pressed.`;
+  const right = el('div', {},
+    el('div', {class:'tiles'}, el('div', {class:'tile'}, el('div', {class:'n'}, Math.round(L.overall)), el('div', {class:'l'}, 'Original')), el('div', {class:'tile'}, el('div', {class:'n'}, Math.round(pv.overall)), el('div', {class:'l'}, 'After edit')), el('div', {class:'tile'}, el('div', {class:'n'}, Math.round(W.overall)), el('div', {class:'l'}, 'Winner'))),
+    el('div', {class:'meter', title:`${pctTxt}% of the gap closed`}, el('i', {style:`width:${pctTxt}%`})),
+    el('p', {class:'small'}, verdict),
+    el('h3', {style:'margin-top:14px'}, 'The edit, as slider moves'),
+    R.recipe.lines.length ? el('table', {}, el('tbody', {}, R.recipe.lines.map(l => el('tr', {}, el('td', {}, l.name), el('td', {class:'n'}, l.value))))) : el('p', {class:'muted'}, 'Tone and colour already match closely.'),
+    el('p', {class:'small muted', style:'margin-top:8px'}, 'Values approximate Lightroom / Camera Raw style sliders (-100…+100). Start there and adjust by eye.' + (R.recipe.color_ok ? '' : ' Colour temperature was left alone because the scenes differ.')));
+  s.append(el('div', {class:'grid2'}, el('div', {}, cmp), el('div', {class:'card'}, right)));
+}
+
+function histSVG() {
+  const w = 520, h = 150, pad = 18, A = R.photos.a.histogram.l, B = R.photos.b.histogram.l, n = A.length;
+  const mx = Math.max(...A.slice(1, n-1), ...B.slice(1, n-1)) * 1.1;
+  const X = i => pad + i/(n-1)*(w-2*pad), Y = v => h - 22 - Math.min(1, v/mx)*(h-34);
+  const path = d => d.map((v,i) => (i?'L':'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join('');
+  const area = d => path(d) + `L${X(n-1)} ${h-22}L${X(0)} ${h-22}Z`;
+  const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="Brightness histograms of both photos">
+    <line x1="${pad}" x2="${w-pad}" y1="${h-22}" y2="${h-22}" stroke="var(--line)"/>
+    <path d="${area(A)}" fill="var(--a)" opacity=".10"/><path d="${area(B)}" fill="var(--b)" opacity=".10"/>
+    <path d="${path(A)}" fill="none" stroke="var(--a)" stroke-width="2" stroke-linejoin="round"/><path d="${path(B)}" fill="none" stroke="var(--b)" stroke-width="2" stroke-linejoin="round"/>
+    <line id="hx" y1="6" y2="${h-22}" stroke="var(--muted)" visibility="hidden"/>
+    <text x="${pad}" y="${h-6}">shadows</text><text x="${w/2}" y="${h-6}" text-anchor="middle">mid-tones</text><text x="${w-pad}" y="${h-6}" text-anchor="end">highlights</text>
+    <rect id="hhit" x="${pad}" y="0" width="${w-2*pad}" height="${h-22}" fill="transparent"/></svg>`;
+  const d = el('div', {html: svg});
+  const hit = d.querySelector('#hhit'), hx = d.querySelector('#hx'), t = $('#tip');
+  hit.addEventListener('mousemove', e => { const r = hit.getBoundingClientRect(); const i = Math.max(0, Math.min(n-1, Math.round((e.clientX - r.left)/r.width*(n-1)))); hx.setAttribute('x1', X(i)); hx.setAttribute('x2', X(i)); hx.setAttribute('visibility','visible');
+    t.innerHTML = `Brightness ${Math.round(i/(n-1)*100)}%<br>${sw('a')}${esc(R.photos.a.name)}: ${(A[i]*100).toFixed(1)}% of pixels<br>${sw('b')}${esc(R.photos.b.name)}: ${(B[i]*100).toFixed(1)}%`; t.style.display='block'; t.style.left = Math.min(innerWidth - t.offsetWidth - 8, e.clientX+14)+'px'; t.style.top = (e.clientY+14)+'px'; });
+  hit.addEventListener('mouseleave', () => { hx.setAttribute('visibility','hidden'); t.style.display='none'; });
+  return d;
+}
+
+function renderMeasured() {
+  const s = $('#s_meas'); s.innerHTML = '';
+  const A = R.photos.a, B = R.photos.b, ma = A.measured, mb = B.measured;
+  s.append(el('h2', {}, 'Measurements'), el('p', {class:'sub'}, 'Read directly off the pixels - no model involved.'));
+  const pc = (x, d=1) => (100*x).toFixed(d) + '%';
+  const cast = m => { const w = []; if (Math.abs(m.cast_b) >= .07) w.push(m.cast_b > 0 ? 'warm' : 'cool'); if (Math.abs(m.cast_a) >= .07) w.push(m.cast_a > 0 ? 'magenta' : 'green'); return w.join(' + ') || 'neutral'; };
+  const rows = [
+    ['Blown highlights', pc(ma.clip_hi), pc(mb.clip_hi), 'Share of pixels clipped to white'],
+    ['Crushed shadows', pc(ma.clip_lo), pc(mb.clip_lo), 'Share of pixels clipped to black'],
+    ['Median brightness', ma.luma_median.toFixed(2), mb.luma_median.toFixed(2), '0 = black, 1 = white'],
+    ['Tonal range used', pc(ma.dyn_range,0), pc(mb.dyn_range,0), 'Span between darkest and brightest 1%'],
+    ['Contrast', ma.contrast.toFixed(2), mb.contrast.toFixed(2), 'Spread of brightness values'],
+    ['Saturation', pc(ma.saturation,0), pc(mb.saturation,0), 'Mean colour saturation'],
+    ['Colour cast in neutrals', cast(ma), cast(mb), 'Lean of areas that should be grey'],
+    ['Edge crispness', ma.crispness.toFixed(2), mb.crispness.toFixed(2), 'Higher = crisper edges in the sharpest region'],
+    ['Focus spread', ma.focus_spread.toFixed(1), mb.focus_spread.toFixed(1), 'Higher = bigger sharp/soft difference across the frame'],
+    ['Noise (×1000)', (1000*ma.noise).toFixed(1), (1000*mb.noise).toFixed(1), 'Grain measured in smooth areas'],
+    ['Horizon tilt', ma.tilt_conf >= .3 ? ma.tilt.toFixed(1)+'°' : '–', mb.tilt_conf >= .3 ? mb.tilt.toFixed(1)+'°' : '–', 'Angle of the dominant horizontal line'],
+  ];
+  const tbl = el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, ''), el('th', {class:'n', html: sw('a') + esc(A.name)}), el('th', {class:'n', html: sw('b') + esc(B.name)}))),
+    el('tbody', {}, rows.map(r => { const tr = el('tr', {}, el('td', {}, r[0]), el('td', {class:'n'}, r[1]), el('td', {class:'n'}, r[2])); tr.title = r[3]; return tr; })));
+  const pal = p => el('div', {class:'pal', title:'Dominant colours'}, p.palette.map(([hex, share]) => el('i', {style:`background:${hex};width:${(share*100).toFixed(1)}%`, title:`${hex} · ${(share*100).toFixed(0)}%`})));
+  s.append(el('div', {class:'grid2'},
+    el('div', {class:'card'}, el('h3', {}, 'Brightness distribution'), el('div', {class:'small muted', html:`${sw('a')}${esc(A.name)} &nbsp; ${sw('b')}${esc(B.name)}`}), histSVG(),
+      el('h3', {style:'margin-top:12px'}, 'Dominant colours'), el('div', {class:'small', html: sw('a') + esc(A.name)}), pal(A), el('div', {class:'small', html: sw('b') + esc(B.name)}), pal(B)),
+    el('div', {class:'card'}, tbl)));
+}
+
+function renderAbout() {
+  const s = $('#s_about'); s.innerHTML = '';
+  const d = R.model.datasets || {};
+  s.append(el('details', {}, el('summary', {}, 'How this verdict was produced'),
+    el('div', {class:'small', style:'margin-top:8px;color:var(--text2)', html:
+      `<p>Both photos pass through the <strong>same</strong> network (a frozen CLIP ViT-L/14 seeing the whole frame at its true aspect ratio, a second encoder looking at four full-resolution crops, plus the pixel measurements above). It scores each photo on ${R.attributes.length + 2} attributes; the verdict is the difference between the two sets of scores, so swapping the photos exactly flips the result.</p>
+       <p>The attribute heads were trained on human judgements only: ${Object.entries(d).map(([k,v]) => `${k.toUpperCase()} (${v.toLocaleString()})`).join(', ')}, plus clean-vs-single-known-fault pairs for exposure, white balance, level and framing. The overall verdict weights aesthetic appeal ${R.weights.aesthetic} and technical quality ${R.weights.technical}.</p>
+       <p>Limits: the network judges general appeal, not your intent - a deliberately dark, soft or tilted photo will be scored as if it were a mistake. Scores within about 10 points of each other are not meaningfully different.</p>`})));
+}
+</script>
+</body>
+</html>
