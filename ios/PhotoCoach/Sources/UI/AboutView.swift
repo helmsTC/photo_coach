@@ -117,24 +117,24 @@ private struct Credit {
     static let all: [Credit] = [
         Credit(name: "Community Forensics",
                detail: "The AI-image detector is the Community Forensics ViT-S/16-384 model by Jeongsoo Park and Andrew Owens (CVPR 2025), converted to Core ML.",
-               license: mit),
+               license: mit("2025 Jeongsoo Park")),
         Credit(name: "DETR semantic segmentation",
                detail: "Object detection uses Apple's Core ML DETR-ResNet50 semantic segmentation model, licensed under the Apache License 2.0.",
                license: nil),
-        Credit(name: "MobileCLIP2",
-               detail: "The twin network uses Apple's MobileCLIP2-S0 to turn each photo into features, which ApertureIQ's own trained layers then score. Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.",
-               license: nil),
+        Credit(name: "CLIP",
+               detail: "The twin network uses OpenAI's CLIP ViT-B/32 image encoder (Radford et al., 2021) to turn each photo into features, which ApertureIQ's own trained layers then score.",
+               license: mit("2021 OpenAI")),
     ]
 
-    static let mit = """
+    static func mit(_ holder: String) -> String { """
     MIT License
 
-    Copyright (c) 2025 Jeongsoo Park
+    Copyright (c) \(holder)
 
     Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
     The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-    """
+    """ }
 }

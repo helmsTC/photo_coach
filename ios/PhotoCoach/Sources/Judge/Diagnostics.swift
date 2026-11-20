@@ -104,13 +104,14 @@ enum Diagnostics {
 
     static func probe() async {
         guard let d = Samples.data("parity_louise_03"), let std = try? ImagePrep.standardImage(from: d, longSide: 1024).0 else { return }
-        let v = ImagePrep.views(std: std, size: 256)
         for units in [MLComputeUnits.all, .cpuOnly] {
             let cfg = MLModelConfiguration()
             cfg.computeUnits = units
             guard let url = Bundle.main.url(forResource: "Encoder", withExtension: "mlmodelc"),
                   let m = try? MLModel(contentsOf: url, configuration: cfg) else { say("probe: no encoder"); continue }
             say("probe: encoder inputs \(m.modelDescription.inputDescriptionsByName.mapValues { "\($0.type.rawValue) \($0.imageConstraint.map { "\($0.pixelsWide)x\($0.pixelsHigh) fmt \($0.pixelFormatType)" } ?? "")" })")
+            let side = m.modelDescription.inputDescriptionsByName["image"]?.imageConstraint?.pixelsWide ?? 224
+            let v = ImagePrep.views(std: std, size: side)
             do {
                 let pb = try ImagePrep.pixelBuffer(v[0])
                 let out = try await m.prediction(from: MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(pixelBuffer: pb)]))

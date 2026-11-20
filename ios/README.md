@@ -40,7 +40,7 @@ xcrun simctl launch --console-pty booted com.mosaiclens.apertureiq -diag
 
 | File | Role |
 |---|---|
-| `Resources/Encoder.mlpackage` | image encoder: 256x256 image -> 512-d embedding, run 5x per photo (whole frame + 4 detail crops) |
+| `Resources/Encoder.mlpackage` | image encoder (CLIP ViT-B/32): 224x224 image -> 512-d embedding, run 5x per photo (whole frame + 4 detail crops) |
 | `Resources/Tower.mlpackage` | the twin tower: embeddings + measured signals -> 20 attribute scores |
 | `Resources/judge.json` | attribute names, calibration tables, comparison scales, reliability flags, advice text |
 | `Resources/parity.json`, `parity_*.jpg` | reference outputs for the self-test |
@@ -119,4 +119,4 @@ Test results with the app's own code (`-diag -aicheck <folder>`):
 - **Privacy manifest:** `Resources/PrivacyInfo.xcprivacy` declares no tracking, no data collected and no required-reason APIs. Update it if UserDefaults, file timestamps or similar APIs are ever added.
 - **About screen:** opened from the home screen's ••• menu. It shows the version, the privacy note, Restore purchases and the model credits. The self-test menu item only exists in Debug builds.
 - **Saved comparisons:** copies are HEIC at quality 0.8 (about 40% smaller than the old JPEG q0.95; JPEG entries from earlier builds still open). Each entry also stores both shots' AI-check results from the original files, because the re-encoded copies lose C2PA/XMP labels and about a quarter of AI images stop being flagged after re-encoding. History is excluded from iCloud and computer backups.
-- **Licensing:** the MobileCLIP2-S0 encoder weights are under Apple's ML Research Model license, which is limited to non-commercial research. Before selling the app, replace the encoder with a commercially licensed one or get permission from Apple.
+- **Licensing:** the encoder is OpenAI's CLIP ViT-B/32 image tower (MIT license, © 2021 OpenAI), which allows commercial use. It replaced MobileCLIP2-S0, whose weights are limited to non-commercial research. The Tower is trained by us on the encoder's features. Verify the license on the model card (huggingface.co/openai/clip-vit-base-patch32) before shipping.
