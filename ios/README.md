@@ -40,7 +40,7 @@ xcrun simctl launch --console-pty booted com.mosaiclens.apertureiq -diag
 
 | File | Role |
 |---|---|
-| `Resources/Encoder.mlpackage` | image encoder (CLIP ViT-B/32): 224x224 image -> 512-d embedding, run 5x per photo (whole frame + 4 detail crops) |
+| `Resources/Encoder.mlpackage` | image encoder (CLIP ViT-B/32, 8-bit weights): 224x224 image -> 512-d embedding, run 5x per photo (whole frame + 4 detail crops) |
 | `Resources/Tower.mlpackage` | the twin tower: embeddings + measured signals -> 20 attribute scores |
 | `Resources/judge.json` | attribute names, calibration tables, comparison scales, reliability flags, advice text |
 | `Resources/parity.json`, `parity_*.jpg` | reference outputs for the self-test |
