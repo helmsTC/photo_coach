@@ -1,0 +1,40 @@
+{
+  "identifier" : "6F1C2A4E-8B7D-4C1E-9A2F-3D5E7B9C1A20",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : true,
+      "internalID" : "6739000001",
+      "localizations" : [
+        {
+          "description" : "Unlock the full coach: why it won, lenses, objects, coaching and edits.",
+          "displayName" : "ApertureIQ Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.mosaiclens.apertureiq.pro",
+      "referenceName" : "ApertureIQ Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6739000000",
+    "_developerTeamID" : "5597Q8K56P",
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

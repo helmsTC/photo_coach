@@ -34,10 +34,17 @@ enum ImagePrep {
     /// Draw a UIImage (orientation applied) into a w x h RGB buffer.
     static func render(_ ui: UIImage, width w: Int, height h: Int) throws -> RGBImage {
         var rgba = [UInt8](repeating: 255, count: w * h * 4)
+        // Draw in the file's own RGB colour space so pixel values pass through unconverted: the desktop
+        // pipeline (PIL) ignores embedded ICC profiles, so an Adobe RGB / Display P3 file must reach the
+        // network with its raw values, exactly as in training.
+        let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
+        var spaces = [srgb]
+        if let cs = ui.cgImage?.colorSpace, cs.model == .rgb { spaces.insert(cs, at: 0) }
         let ok: Bool = rgba.withUnsafeMutableBytes { buf in
-            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
+            guard let ctx = spaces.lazy.compactMap({
+                CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                          space: $0, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+            }).first else { return false }
             ctx.interpolationQuality = .high
             ctx.setFillColor(UIColor.white.cgColor)
             ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
@@ -137,13 +144,13 @@ enum ImagePrep {
 
     /// The five model inputs: the whole frame squashed to a square, then four native-resolution
     /// crops centred on the rule-of-thirds intersections (top-left, top-right, bottom-left, bottom-right).
-    static func views(std: RGBImage, original: UIImage, size: Int) throws -> [RGBImage] {
+    static func views(std: RGBImage, size: Int) -> [RGBImage] {
         var out = [resizeArea(std, width: size, height: size)]
         var base = std
         if min(std.width, std.height) < size {                       // tiny photo: enlarge so a crop fits
             let s = Double(size) / Double(min(std.width, std.height))
-            base = try render(original, width: max(size, Int((Double(std.width) * s).rounded())),
-                              height: max(size, Int((Double(std.height) * s).rounded())))
+            base = Imaging.resizeBilinear(std, w: max(size, Int((Double(std.width) * s).rounded())),
+                                          h: max(size, Int((Double(std.height) * s).rounded())))
         }
         for fy in [1.0 / 3.0, 2.0 / 3.0] {
             for fx in [1.0 / 3.0, 2.0 / 3.0] {
