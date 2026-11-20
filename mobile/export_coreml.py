@@ -68,6 +68,37 @@ class TowerWrap(nn.Module):
         return t.out(t.trunk(x))
 
 
+def store_8bit(ml):
+    """Store the weights of a `_q8` encoder as 8-bit.  They are already on an 8-bit grid (see
+    mobile.extract.quantize8), so this must not change them: any tensor Core ML would re-round along a
+    different axis is left in 16-bit instead."""
+    import coremltools.optimize.coreml as cto
+
+    def consts(model, kind):
+        return {op.name: op for f in model._mil_program.functions.values() for op in f.operations if op.op_type == kind}
+
+    before = {n: op.val.val for n, op in consts(ml, "const").items() if isinstance(op.val.val, np.ndarray) and op.val.val.size >= 2048}
+    skip = {}
+    for _ in range(2):
+        cfg = cto.OptimizationConfig(global_config=cto.OpLinearQuantizerConfig(mode="linear_symmetric", weight_threshold=2048),
+                                     op_name_configs=skip)
+        q = cto.linear_quantize_weights(ml, cfg)
+        worst = 0.0
+        for n, op in consts(q, "constexpr_affine_dequantize").items():
+            n = n.removesuffix("_quantized")
+            w = before[n].astype(np.float32)
+            err = float(np.abs(np.asarray(op.materialized_val_inference(), np.float32) - w).max() / max(float(np.abs(w).max()), 1e-12))
+            if err > 1e-3:
+                skip[n] = None
+            else:
+                worst = max(worst, err)
+        if not skip or _ == 1:
+            break
+    print(f"   8-bit weights: {len(consts(q, 'constexpr_affine_dequantize'))} tensors, worst change {worst:.1e} of a tensor's range; "
+          f"{len(skip)} kept in 16-bit")
+    return q
+
+
 def _size(path):
     return sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(path) for f in fs) / 1e6
 
@@ -95,10 +126,8 @@ def main():
                     inputs=[ct.ImageType(name="image", shape=(1, 3, res, res), scale=1.0, color_layout=ct.colorlayout.RGB)],
                     outputs=[ct.TensorType(name="embedding")], convert_to="mlprogram",
                     compute_precision=ct.precision.FLOAT16, minimum_deployment_target=ct.target.iOS17)
-    if "--quant8" in sys.argv:                            # 8-bit weights: about half the size; re-check parity after
-        import coremltools.optimize.coreml as cto
-        ml = cto.linear_quantize_weights(ml, cto.OptimizationConfig(
-            global_config=cto.OpLinearQuantizerConfig(mode="linear_symmetric")))
+    if enc_name.endswith("_q8"):
+        ml = store_8bit(ml)
     ml.short_description = f"Photo Coach image encoder ({enc_label})"
     p = os.path.join(OUT, "Encoder.mlpackage")
     shutil.rmtree(p, ignore_errors=True)

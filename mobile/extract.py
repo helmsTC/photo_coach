@@ -43,17 +43,37 @@ CANDIDATES = {                       # name -> (open_clip model, pretrained tag)
     "mobileclip2_b":  ("MobileCLIP2-B", "dfndr2b"),
     # commercially usable
     "clip_b32":       ("ViT-B-32-quickgelu", "openai"),             # MIT
+    "clip_b32_q8":    ("ViT-B-32-quickgelu", "openai"),             # the same with 8-bit weights: half the download
     "siglip2_b16":    ("ViT-B-16-SigLIP2-256", "webli"),            # Apache 2.0
     "siglip2_b32":    ("ViT-B-32-SigLIP2-256", "webli"),            # Apache 2.0, a quarter of the tokens of B/16
     "dinov2_s14":     ("timm:vit_small_patch14_dinov2.lvd142m", None),   # Apache 2.0
 }
 # what each encoder is called in judge.json / model descriptions
-DISPLAY = {"clip_b32": "OpenAI CLIP ViT-B/32", "siglip2_b16": "SigLIP 2 ViT-B/16", "siglip2_b32": "SigLIP 2 ViT-B/32",
+DISPLAY = {"clip_b32": "OpenAI CLIP ViT-B/32", "clip_b32_q8": "OpenAI CLIP ViT-B/32, 8-bit weights", "siglip2_b16": "SigLIP 2 ViT-B/16", "siglip2_b32": "SigLIP 2 ViT-B/32",
            "dinov2_s14": "DINOv2 ViT-S/14"}
+
+
+Q8_MIN = 2048                        # weights with fewer values than this stay in floating point
+
+
+def quantize8(module):
+    """Round every large weight tensor to 8 bits, in place: one symmetric linear scale per slice
+    along axis 0 (max |w| -> 127).  A name ending in `_q8` means the encoder IS this rounded model:
+    features, tower training and the parity reference all use it, so the 8-bit files the apps ship
+    (mobile.export_coreml / mobile.export_onnx) reproduce the reference instead of approximating it."""
+    with torch.no_grad():
+        for p in module.parameters():
+            if p.ndim >= 2 and p.numel() >= Q8_MIN:
+                sc = (p.abs().flatten(1).max(1)[0].clamp(min=1e-12) / 127).view(-1, *[1] * (p.ndim - 1))
+                p.copy_((p / sc).round().clamp(-127, 127) * sc)
+    return module
 
 
 def load_visual(name: str):
     """-> (image tower returning one embedding per image, input size, mean, std)."""
+    if name.endswith("_q8"):
+        visual, size, mean, std = load_visual(name[:-3])
+        return quantize8(visual), size, mean, std
     arch, tag = CANDIDATES[name]
     if arch.startswith("timm:"):
         import timm
