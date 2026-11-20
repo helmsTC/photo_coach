@@ -28,7 +28,7 @@ from photocoach.backbone import load_image
 from photocoach.model import HEAD_NAMES, K, load_judge
 from photocoach.signals import VEC_KEYS
 
-from .extract import CANDIDATES, RES, views
+from .extract import CANDIDATES, DISPLAY, RES, load_visual, views
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CKPT = os.path.join(ROOT, "models", "mobile_judge.pt")
@@ -74,7 +74,6 @@ def _size(path):
 
 def main():
     import coremltools as ct
-    import open_clip
     from timm.utils import reparameterize_model
 
     judge, meta = load_judge(CKPT)
@@ -84,21 +83,27 @@ def main():
     os.makedirs(OUT, exist_ok=True)
 
     # ---- encoder ----
-    m = open_clip.create_model(*[CANDIDATES[enc_name][0]], pretrained=CANDIDATES[enc_name][1])
-    cfg = open_clip.get_model_preprocess_cfg(m)
-    size = cfg["size"] if isinstance(cfg["size"], int) else cfg["size"][0]
-    assert size == RES
-    enc = EncoderWrap(reparameterize_model(m.visual.eval()), cfg["mean"], cfg["std"]).eval()
-    ex = torch.rand(1, 3, RES, RES) * 255
+    visual, size, mean, std = load_visual(enc_name)
+    res = int(meta.get("res", RES))                       # the view size the tower's features were cut at
+    assert size == res, f"{enc_name} takes {size}px input but the features were extracted at {res}px"
+    if enc_name.startswith("mobileclip"):
+        visual = reparameterize_model(visual.eval())      # fold MobileCLIP's training-time branches
+    enc_label = DISPLAY.get(enc_name, CANDIDATES[enc_name][0])
+    enc = EncoderWrap(visual.eval(), mean, std).eval()
+    ex = torch.rand(1, 3, res, res) * 255
     ml = ct.convert(torch.jit.trace(enc, ex),
-                    inputs=[ct.ImageType(name="image", shape=(1, 3, RES, RES), scale=1.0, color_layout=ct.colorlayout.RGB)],
+                    inputs=[ct.ImageType(name="image", shape=(1, 3, res, res), scale=1.0, color_layout=ct.colorlayout.RGB)],
                     outputs=[ct.TensorType(name="embedding")], convert_to="mlprogram",
                     compute_precision=ct.precision.FLOAT16, minimum_deployment_target=ct.target.iOS17)
-    ml.short_description = f"Photo Coach image encoder ({CANDIDATES[enc_name][0]})"
+    if "--quant8" in sys.argv:                            # 8-bit weights: about half the size; re-check parity after
+        import coremltools.optimize.coreml as cto
+        ml = cto.linear_quantize_weights(ml, cto.OptimizationConfig(
+            global_config=cto.OpLinearQuantizerConfig(mode="linear_symmetric")))
+    ml.short_description = f"Photo Coach image encoder ({enc_label})"
     p = os.path.join(OUT, "Encoder.mlpackage")
     shutil.rmtree(p, ignore_errors=True)
     ml.save(p)
-    print(f"Encoder.mlpackage  {_size(p):.1f} MB")
+    print(f"Encoder.mlpackage  {_size(p):.1f} MB  ({enc_label}, {res}px)")
 
     # ---- tower ----
     tw = TowerWrap(judge.tower).eval()
@@ -139,7 +144,7 @@ def main():
                           validity=None if val is None else round(float(val), 3), metric=metric,
                           scale=float(judge.log_scale[i].exp()), refMean=float(judge.ref_mean[i]), refStd=float(judge.ref_std[i]),
                           quantiles=[round(float(q), 5) for q in judge.q_table[i]]))
-    info = dict(encoder=CANDIDATES[enc_name][0], inputSize=RES, stdLongSide=signals.STD_LONG_SIDE,
+    info = dict(encoder=enc_label, inputSize=res, stdLongSide=signals.STD_LONG_SIDE,
                 weights=dict(aesthetic=0.6, technical=0.4), groups=[g for g, _ in coach.GROUPS],
                 signalKeys=VEC_KEYS, signalsUsed=arch["h_keys"] if arch["h_keys"] is not None else VEC_KEYS,
                 heads=heads, poolSize=meta.get("pool_size"), trained=meta.get("trained"), datasets=meta.get("datasets"),
@@ -152,10 +157,10 @@ def main():
     for f in ("louise_03.jpg", "louise_11.jpg"):
         shutil.copy(os.path.join(demo, f), os.path.join(OUT, "parity_" + f))
         rgb = signals.to_std(np.asarray(load_image(os.path.join(demo, f))))
-        v = torch.tensor(views(rgb)).permute(0, 3, 1, 2).float()
+        v = torch.tensor(views(rgb, res)).permute(0, 3, 1, 2).float()
         hv = torch.tensor(signals.vector(signals.measure(rgb, full=False)))[None]
         with torch.no_grad():
-            e = enc(v)                                     # (6,512): squash, letterbox, 4 crops
+            e = enc(v)                                     # (6,D): squash, letterbox, 4 crops
             s = judge.tower(e[0:1], e[2:6][None], hv, torch.ones(1))[0].numpy()
         par.append(dict(file="parity_" + f, stdSize=[rgb.shape[1], rgb.shape[0]],
                         globalEmbedHead=[round(float(x), 4) for x in e[0, :8]],

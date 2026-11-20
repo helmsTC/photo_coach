@@ -10,8 +10,10 @@ fitting the whole frame into the square are cached so they can be compared:
     g_sq  squashed (aspect ratio lost, every pixel used)
     g_lb  letterboxed (aspect ratio kept, grey bars)
 
-Several candidate encoders are run in the same pass over the images.
-Output: data/features_mobile/<encoder>/<dataset>.npz
+Several candidate encoders are run in the same pass over the images.  Each one gets views cut at
+its OWN input size (which is what the apps do: they read `inputSize` from judge.json), so a 224 px
+encoder sees 224 px crops rather than 256 px crops resized.
+Output: data/features_mobile/<encoder>/<dataset>.npz   (with `res`, the view size used)
 """
 from __future__ import annotations
 
@@ -34,11 +36,34 @@ from photocoach.extract import SOURCES, _init_worker
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "data", "features_mobile")
 RES = 256
-CANDIDATES = {                       # name -> (open_clip model, pretrained tag)
+CANDIDATES = {                       # name -> (open_clip model, pretrained tag), or ("timm:<model>", None)
+    # Apple ML Research Model License (non-commercial): kept only as the accuracy baseline
     "mobileclip2_s0": ("MobileCLIP2-S0", "dfndr2b"),
     "mobileclip2_s2": ("MobileCLIP2-S2", "dfndr2b"),
     "mobileclip2_b":  ("MobileCLIP2-B", "dfndr2b"),
+    # commercially usable
+    "clip_b32":       ("ViT-B-32-quickgelu", "openai"),             # MIT
+    "siglip2_b16":    ("ViT-B-16-SigLIP2-256", "webli"),            # Apache 2.0
+    "siglip2_b32":    ("ViT-B-32-SigLIP2-256", "webli"),            # Apache 2.0, a quarter of the tokens of B/16
+    "dinov2_s14":     ("timm:vit_small_patch14_dinov2.lvd142m", None),   # Apache 2.0
 }
+# what each encoder is called in judge.json / model descriptions
+DISPLAY = {"clip_b32": "OpenAI CLIP ViT-B/32", "siglip2_b16": "SigLIP 2 ViT-B/16", "siglip2_b32": "SigLIP 2 ViT-B/32",
+           "dinov2_s14": "DINOv2 ViT-S/14"}
+
+
+def load_visual(name: str):
+    """-> (image tower returning one embedding per image, input size, mean, std)."""
+    arch, tag = CANDIDATES[name]
+    if arch.startswith("timm:"):
+        import timm
+        m = timm.create_model(arch[5:], pretrained=True, num_classes=0, img_size=224)   # CLS embedding
+        return m, 224, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+    import open_clip
+    m = open_clip.create_model(arch, pretrained=tag)
+    cfg = open_clip.get_model_preprocess_cfg(m)
+    size = cfg["size"] if isinstance(cfg["size"], int) else cfg["size"][0]
+    return m.visual, size, tuple(cfg["mean"]), tuple(cfg["std"])
 
 
 def squash(rgb: np.ndarray, res: int = RES) -> np.ndarray:
@@ -62,33 +87,28 @@ def views(rgb_std: np.ndarray, res: int = RES) -> np.ndarray:
 
 class Encoder:
     def __init__(self, name: str, device: str):
-        import open_clip
-        arch, tag = CANDIDATES[name]
-        m = open_clip.create_model(arch, pretrained=tag)
-        cfg = open_clip.get_model_preprocess_cfg(m)
-        size = cfg["size"] if isinstance(cfg["size"], int) else cfg["size"][0]
-        self.size = size                # views are cut at RES; an encoder with another input size gets them resized
-        self.visual = m.visual.to(device).eval().requires_grad_(False)
-        self.mean = torch.tensor(cfg["mean"], device=device).view(1, 3, 1, 1)
-        self.std = torch.tensor(cfg["std"], device=device).view(1, 3, 1, 1)
+        visual, size, mean, std = load_visual(name)
+        self.size = size                # the app cuts its views at this size, and so does extraction
+        self.visual = visual.to(device).eval().requires_grad_(False)
+        self.mean = torch.tensor(mean, device=device).view(1, 3, 1, 1)
+        self.std = torch.tensor(std, device=device).view(1, 3, 1, 1)
         self.device = device
         self.name = name
         print(f"  {name}: input {size}px, {sum(p.numel() for p in self.visual.parameters()) / 1e6:.1f}M parameters", flush=True)
 
     @torch.inference_mode()
     def embed(self, u8: np.ndarray, bs: int = 64) -> torch.Tensor:
-        """(N,RES,RES,3) uint8 -> (N,D) float32 on CPU (not normalised)."""
+        """(N,size,size,3) uint8 -> (N,D) float32 on CPU (not normalised)."""
         out = []
         for i in range(0, len(u8), bs):
             x = torch.as_tensor(u8[i:i + bs]).to(self.device).permute(0, 3, 1, 2).float().div_(255.0)
-            if self.size != x.shape[-1]:
-                x = torch.nn.functional.interpolate(x, size=(self.size, self.size), mode="bilinear", antialias=True, align_corners=False)
+            assert x.shape[-1] == self.size, f"{self.name} expects {self.size}px views, got {x.shape[-1]}"
             out.append(self.visual((x - self.mean) / self.std).float().cpu())
         return torch.cat(out)
 
 
 def _prep(args):
-    key, data, meta = args
+    key, data, meta, sizes = args
     try:
         rgb = signals.to_std(np.asarray(load_image(data, max_side=1536)))
         if min(rgb.shape[:2]) < 48:
@@ -97,7 +117,7 @@ def _prep(args):
         if meta["n_synth"]:
             rng = np.random.default_rng(zlib.crc32(key.encode()))
             variants += synth.random_variants(rgb, meta["n_synth"], rng)
-        return [dict(key=key, effect=eff, severity=sev, meta=meta, v=views(im),
+        return [dict(key=key, effect=eff, severity=sev, meta=meta, v={r: views(im, r) for r in sizes},
                      aspect=im.shape[1] / im.shape[0],
                      h=signals.vector(signals.measure(im, full=False))) for eff, sev, im in variants]
     except Exception as e:
@@ -106,16 +126,21 @@ def _prep(args):
 
 
 def run(name: str, encoders: list, limit: int | None = None):
-    recs, buf = [], []
+    sizes = sorted({e.size for e in encoders})
+    recs = []
+    buf = {r: [] for r in sizes}
     F = {e.name: [] for e in encoders}
 
     def flush():
-        if not buf:
+        n = len(buf[sizes[0]])              # records waiting (each holds 6 views)
+        if not n:
             return
-        x = np.concatenate(buf)
-        for e in encoders:
-            F[e.name].append(e.embed(x).view(len(buf), 6, -1).numpy().astype(np.float16))
-        buf.clear()
+        for r in sizes:
+            x = np.concatenate(buf[r])
+            for e in encoders:
+                if e.size == r:
+                    F[e.name].append(e.embed(x).view(n, 6, -1).numpy().astype(np.float16))
+            buf[r].clear()
 
     def save():
         flush()
@@ -132,7 +157,7 @@ def run(name: str, encoders: list, limit: int | None = None):
             d = os.path.join(OUT, e.name)
             os.makedirs(d, exist_ok=True)
             tmp = os.path.join(d, f"{name}.tmp.npz")
-            np.savez(tmp, g_sq=f[:, 0], g_lb=f[:, 1], l=f[:, 2:], **base)
+            np.savez(tmp, g_sq=f[:, 0], g_lb=f[:, 1], l=f[:, 2:], res=np.int32(e.size), **base)
             os.replace(tmp, os.path.join(d, f"{name}.npz"))
         print(f"[{name}] saved {len(recs)} records for {len(encoders)} encoders", flush=True)
 
@@ -144,16 +169,18 @@ def run(name: str, encoders: list, limit: int | None = None):
         def drain(block_all=False):
             while pending and (block_all or len(pending) >= 160 or pending[0].done()):
                 for r in pending.popleft().result() or []:
-                    buf.append(r.pop("v"))
+                    v = r.pop("v")
+                    for sz in sizes:
+                        buf[sz].append(v[sz])
                     recs.append(r)
-                    if len(buf) >= 64:
+                    if len(buf[sizes[0]]) >= 64:
                         flush()
                     if len(recs) % 2000 == 0:
                         el = time.time() - t0
                         print(f"[{name}] {len(recs)} records  {len(recs) / el:.1f}/s  {el / 60:.1f} min", flush=True)
 
         for item in SOURCES[name]():
-            pending.append(ex.submit(_prep, item))
+            pending.append(ex.submit(_prep, (*item, sizes)))
             n_in += 1
             drain()
             if limit and n_in >= limit:
