@@ -4,7 +4,7 @@
     python -m mobile.export_onnx encoder tower   # a subset
 
 Writes into android/app/src/main/assets/:
-    encoder.onnx       image batch [n,3,256,256] RGB 0-255 -> 512-d embeddings        (5 views per photo)
+    encoder.onnx       image batch [n,3,S,S] RGB 0-255 -> embeddings (S = inputSize in judge.json)        (5 views per photo)
     tower.onnx         global embed + 4 crop embeds + signals -> 20 raw attribute scores
     segmenter.onnx     [1,3,448,448] RGB 0-255 -> COCO-panoptic class id per pixel (DETR-ResNet50)
     segmenter.json     class names and which ids are countable things
@@ -74,18 +74,21 @@ def _export(module, args, path, inputs, outputs, dynamic=None, opset=17):
 # ---------------------------------------------------------------- encoder + tower
 
 def export_encoder():
-    import open_clip
     from timm.utils import reparameterize_model
     from photocoach.model import load_judge
     from .export_coreml import EncoderWrap
-    from .extract import CANDIDATES, RES
+    from .extract import RES, load_visual
 
     _, meta = load_judge(CKPT)
     name = meta["encoder"]
-    m = open_clip.create_model(CANDIDATES[name][0], pretrained=CANDIDATES[name][1])
-    cfg = open_clip.get_model_preprocess_cfg(m)
-    enc = EncoderWrap(reparameterize_model(m.visual.eval()), cfg["mean"], cfg["std"]).eval()
-    ex = torch.rand(3, 3, RES, RES) * 255
+    visual, size, mean, std = load_visual(name)
+    res = int(meta.get("res", RES))                       # the view size the tower's features were cut at
+    assert size == res, f"{name} takes {size}px input but the features were extracted at {res}px"
+    if name.startswith("mobileclip"):
+        visual = reparameterize_model(visual.eval())
+    enc = EncoderWrap(visual.eval(), mean, std).eval()
+    ex = torch.rand(3, 3, res, res) * 255
+
     p = os.path.join(OUT, "encoder.onnx")
     _export(enc, (ex,), p, ["image"], ["embedding"], {"image": {0: "n"}, "embedding": {0: "n"}})
     store_fp16(p)

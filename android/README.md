@@ -12,7 +12,7 @@ cd android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Minimum Android version is 8.0 (API 26). The debug APK is about 250 MB: 160 MB of models, plus native libraries for four CPU types and unshrunk code. A release build for one CPU type is much smaller.
+Minimum Android version is 8.0 (API 26). The debug APK is about 400 MB: 313 MB of models, plus native libraries for four CPU types and unshrunk code. A release build for one CPU type is much smaller.
 
 If the checkout sits on a slow or shared drive (for example a Windows drive under WSL), build outside the source tree:
 
@@ -58,7 +58,7 @@ In a debug build, tap **⋯ > Run self-test** on the home screen. It runs the sa
 
 | File | Size | What |
 |---|---|---|
-| `encoder.onnx` | 23 MB | MobileCLIP2-S0 image encoder, 256 x 256 -> 512-d, run on 5 views per photo |
+| `encoder.onnx` | 176 MB | OpenAI CLIP ViT-B/32 image encoder (MIT), 224 x 224 -> 512-d, run on 5 views per photo |
 | `tower.onnx` | 6 MB | the twin tower: embeddings + measured signals -> 20 attribute scores |
 | `segmenter.onnx` | 87 MB | DETR-ResNet50 panoptic (`facebook/detr-resnet-50-panoptic`, Apache-2.0), 448 x 448 -> one COCO class per pixel |
 | `ai_detector.onnx` | 44 MB | Community Forensics ViT-S/16-384 (MIT), P(AI-generated) |
@@ -108,5 +108,5 @@ adb shell am start -n com.mosaiclens.apertureiq/.MainActivity --ez selftest true
 ## Before a Play release
 
 - **Signing and bundle:** add a release signing config and build an app bundle (`./gradlew :app:bundleRelease`). The release build shrinks code with R8 (`proguard-rules.pro` keeps ONNX Runtime and the serializers).
-- **Size:** the models alone are 160 MB, so the download will be close to Play's size limit for an app's base module (check the current figure in the Play Console help). If it does not fit, move the segmenter and the AI detector into an install-time asset pack (Play Asset Delivery) or shrink them.
-- **Model licences:** the About screen credits each model. MobileCLIP2 is under Apple's Machine Learning Research Model License; check that its terms fit how you plan to distribute the app.
+- **Size:** the models alone are 313 MB, which is over Play's size limit for an app's base module (check the current figure in the Play Console help). Before a Play release, move the models into an install-time asset pack (Play Asset Delivery), or shrink the encoder: 8-bit weights halve it to about 88 MB but move scores by 1-2 percentile points on average.
+- **Model licences:** the About screen credits each model. All four allow commercial use: CLIP ViT-B/32 (MIT), Community Forensics (MIT), DETR (Apache 2.0); the tower is our own. Verify each on its model card before shipping.

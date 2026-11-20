@@ -20,6 +20,7 @@ tasks.test {
     useJUnitPlatform()
     maxHeapSize = "3g"
     // the models, judge.json and the parity fixtures live in the app's assets
+    inputs.dir(rootProject.file("app/src/main/assets"))     // rerun when a model is re-exported
     systemProperty("assets", rootProject.file("app/src/main/assets").absolutePath)
     systemProperty("demo", rootProject.file("../data/demo").absolutePath)
     systemProperty("out", layout.buildDirectory.dir("test-output").get().asFile.absolutePath)

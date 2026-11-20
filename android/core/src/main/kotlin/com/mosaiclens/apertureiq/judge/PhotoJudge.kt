@@ -15,7 +15,7 @@ fun interface Decoder {
 
 /** The neural networks, wherever they run. */
 interface Networks {
-    /** 256 x 256 RGB views -> one embedding each. */
+    /** Square RGB views (JudgeInfo.inputSize) -> one embedding each. */
     fun embed(views: List<RGBImage>): List<FloatArray>
     /** Whole-frame embedding, four crop embeddings, measured signals -> one raw score per head. */
     fun tower(g: FloatArray, l: List<FloatArray>, h: FloatArray): DoubleArray

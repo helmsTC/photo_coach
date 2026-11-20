@@ -80,9 +80,9 @@ fun AppIconArt(modifier: Modifier = Modifier) {
 
 private class Credit(val name: String, val detail: String, val license: String?)
 
-private const val MIT = """MIT License
+private fun mit(holder: String) = """MIT License
 
-Copyright (c) 2025 Jeongsoo Park
+Copyright (c) $holder
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -93,15 +93,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 private val credits = listOf(
     Credit(
         "Community Forensics",
-        "The AI-image detector is the Community Forensics ViT-S/16-384 model by Jeongsoo Park and Andrew Owens (CVPR 2025), converted to ONNX.", MIT,
+        "The AI-image detector is the Community Forensics ViT-S/16-384 model by Jeongsoo Park and Andrew Owens (CVPR 2025), converted to ONNX.", mit("2025 Jeongsoo Park"),
     ),
     Credit(
         "DETR panoptic segmentation",
         "Object detection uses the DETR-ResNet50 panoptic segmentation model (Carion et al., Facebook AI Research), licensed under the Apache License 2.0.", null,
     ),
     Credit(
-        "MobileCLIP2",
-        "The twin network uses Apple's MobileCLIP2-S0 to turn each photo into features, which ApertureIQ's own trained layers then score. Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.", null,
+        "CLIP",
+        "The twin network uses OpenAI's CLIP ViT-B/32 image encoder (Radford et al., 2021) to turn each photo into features, which ApertureIQ's own trained layers then score.", mit("2021 OpenAI"),
     ),
     Credit("ONNX Runtime", "The models run on this phone with Microsoft's ONNX Runtime, licensed under the MIT License.", null),
 )
