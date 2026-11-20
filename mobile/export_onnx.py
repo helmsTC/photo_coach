@@ -57,6 +57,90 @@ def store_fp16(path: str, min_elems: int = 256) -> None:
     onnx.save(m, path)
 
 
+def store_q8(path: str, min_elems: int = 2048) -> float:
+    """Rewrite large float32 weight tensors as int8 x a float scale per slice (Cast + Mul, folded when
+    the session loads): a quarter of float32.  The slicing axis is whichever of first/last reproduces
+    the tensor best, so weights that are already on an 8-bit grid (an encoder loaded through
+    mobile.extract.quantize8) are stored exactly whichever way the exporter laid them out.
+    Returns the largest rounding error relative to the tensor's own largest value."""
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    m = onnx.load(path)
+    new, extra, worst = [], [], 0.0
+    for init in m.graph.initializer:
+        if init.data_type != TensorProto.FLOAT or len(init.dims) < 2 or int(np.prod(init.dims)) < min_elems:
+            continue
+        w = numpy_helper.to_array(init)
+        if not np.isfinite(w).all():
+            continue
+        best = None
+        for axis in {0, w.ndim - 1}:
+            other = tuple(i for i in range(w.ndim) if i != axis)
+            sc = (np.maximum(np.abs(w).max(axis=other, keepdims=True), 1e-12) / 127).astype(np.float32)
+            q = np.clip(np.rint(w / sc), -127, 127).astype(np.int8)
+            err = float(np.abs(q.astype(np.float32) * sc - w).max() / max(float(np.abs(w).max()), 1e-12))
+            if best is None or err < best[0]:
+                best = (err, q, sc)
+        err, q, sc = best
+        worst = max(worst, err)
+        name = init.name
+        init.CopyFrom(numpy_helper.from_array(q, name + "__q8"))
+        extra.append(numpy_helper.from_array(sc, name + "__scale"))
+        new.append(helper.make_node("Cast", [name + "__q8"], [name + "__q8f"], to=TensorProto.FLOAT, name=name + "__q8cast"))
+        new.append(helper.make_node("Mul", [name + "__q8f", name + "__scale"], [name], name=name + "__q8mul"))
+    m.graph.initializer.extend(extra)
+    nodes = new + list(m.graph.node)
+    del m.graph.node[:]
+    m.graph.node.extend(nodes)
+    onnx.save(m, path)
+    return worst
+
+
+def _palette(x: np.ndarray, k: int = 256, iters: int = 12) -> tuple[np.ndarray, np.ndarray]:
+    """1-D k-means: -> (k centres, index of each value)."""
+    x = x.ravel().astype(np.float64)
+    c = np.unique(np.concatenate([np.quantile(x, (np.arange(k) + 0.5) / k)[::2], np.linspace(x.min(), x.max(), k)[::2]]))[:k]
+    for _ in range(iters):
+        idx = np.searchsorted((c[1:] + c[:-1]) / 2, x)
+        n = np.bincount(idx, minlength=len(c))
+        c = np.sort(np.where(n > 0, np.bincount(idx, weights=x, minlength=len(c)) / np.maximum(n, 1), c))
+    idx = np.searchsorted((c[1:] + c[:-1]) / 2, x)
+    lut = np.zeros(k, np.float32)
+    lut[:len(c)] = c
+    return lut, idx.astype(np.uint8)
+
+
+def store_pal8(path: str, min_elems: int = 2048) -> None:
+    """Rewrite large float32 weight tensors as 8-bit indices into a 256-value table, times a scale per
+    slice along axis 0 (Cast + Gather + Mul).  Lossy, but much gentler than linear 8-bit on
+    convolutions with folded batch-norm: DETR's labels survive this and do not survive store_q8."""
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    m = onnx.load(path)
+    new, extra = [], []
+    for init in m.graph.initializer:
+        if init.data_type != TensorProto.FLOAT or len(init.dims) < 2 or int(np.prod(init.dims)) < min_elems:
+            continue
+        w = numpy_helper.to_array(init)
+        if not np.isfinite(w).all():
+            continue
+        sc = np.maximum(np.abs(w).reshape(w.shape[0], -1).max(1), 1e-12).reshape(-1, *[1] * (w.ndim - 1)).astype(np.float32)
+        lut, idx = _palette(w / sc)
+        name = init.name
+        init.CopyFrom(numpy_helper.from_array(idx.reshape(w.shape), name + "__p8"))
+        extra += [numpy_helper.from_array(lut, name + "__lut"), numpy_helper.from_array(sc, name + "__scale")]
+        new.append(helper.make_node("Cast", [name + "__p8"], [name + "__p8i"], to=TensorProto.INT32, name=name + "__p8cast"))
+        new.append(helper.make_node("Gather", [name + "__lut", name + "__p8i"], [name + "__p8f"], axis=0, name=name + "__p8gather"))
+        new.append(helper.make_node("Mul", [name + "__p8f", name + "__scale"], [name], name=name + "__p8mul"))
+    m.graph.initializer.extend(extra)
+    nodes = new + list(m.graph.node)
+    del m.graph.node[:]
+    m.graph.node.extend(nodes)
+    onnx.save(m, path)
+
+
 def _mb(p):
     return os.path.getsize(p) / 1e6
 
@@ -91,6 +175,8 @@ def export_encoder():
 
     p = os.path.join(OUT, "encoder.onnx")
     _export(enc, (ex,), p, ["image"], ["embedding"], {"image": {0: "n"}, "embedding": {0: "n"}})
+    if name.endswith("_q8"):                              # weights are already on an 8-bit grid: store them as such
+        print(f"   8-bit storage: worst rounding error {store_q8(p):.1e} of a tensor's range (0 = exact)")
     store_fp16(p)
     with torch.no_grad():
         ref = enc(ex).numpy()
@@ -183,11 +269,12 @@ def export_segmenter():
     ex = torch.rand(1, 3, SEG, SEG) * 255
     p = os.path.join(OUT, "segmenter.onnx")
     _export(w, (ex,), p, ["image"], ["classes"])
+    store_pal8(p)
     store_fp16(p)
     json.dump(dict(size=SEG, labels=labels, things=things, model="facebook/detr-resnet-50-panoptic (Apache-2.0)"),
               open(os.path.join(OUT, "segmenter.json"), "w"))
 
-    # check on real photos: fp16-stored ONNX vs PyTorch
+    # check on real photos: the compressed ONNX vs PyTorch
     import cv2
     from photocoach.backbone import load_image
     sess = _session(p)
@@ -248,7 +335,7 @@ def export_detector():
     ex = torch.rand(1, 3, 384, 384) * 255
     p = os.path.join(OUT, "ai_detector.onnx")
     _export(w, (ex,), p, ["image"], ["ai"])
-    store_fp16(p)
+    store_fp16(p)             # 16-bit only: 8-bit weights changed verdicts on a test set (see export_ai_detector.py)
     from photocoach.backbone import load_image
     sess = _session(p)
     worst = 0.0
