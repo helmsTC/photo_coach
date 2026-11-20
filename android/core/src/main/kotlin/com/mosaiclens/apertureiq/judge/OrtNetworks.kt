@@ -19,12 +19,13 @@ data class SegmenterLabels(val size: Int, val labels: List<String>, val things: 
  * The four networks through ONNX Runtime (the same Java API on Android and on a desktop JVM, which
  * is what lets the unit tests check this port against the PyTorch reference).
  *
- * `path` maps a model name ("encoder", "tower", "segmenter", "ai_detector") to a readable .onnx file,
- * or null when that model is not installed.  The encoder and tower load up front; the segmenter and
+ * `source` maps a model name ("encoder", "tower", "segmenter", "ai_detector") to a readable .onnx file
+ * path (String) or a direct ByteBuffer holding the model (e.g. memory-mapped from an APK asset), or null
+ * when that model is not installed.  The encoder and tower load up front; the segmenter and
  * the detector load on first use.
  */
 class OrtNetworks(
-    private val path: (String) -> String?,
+    private val source: (String) -> Any?,
     private val segLabels: SegmenterLabels?,
     private val threads: Int = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
     /** Applied to the options of the three big models (e.g. to add NNAPI / XNNPACK); the tower stays on plain CPU. */
@@ -40,12 +41,17 @@ class OrtNetworks(
     private var detTried = false
 
     private fun open(name: String, accelerated: Boolean): OrtSession? {
-        val p = path(name) ?: return null
+        val src = source(name) ?: return null
         val opts = OrtSession.SessionOptions()
         opts.setIntraOpNumThreads(threads)
         opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
         if (accelerated) configure(opts)
-        return env.createSession(p, opts)
+        return when (src) {
+            is String -> env.createSession(src, opts)
+            is java.nio.ByteBuffer -> env.createSession(src, opts)
+            is ByteArray -> env.createSession(src, opts)
+            else -> throw JudgeError.Model("unsupported model source for $name")
+        }
     }
 
     /** Images as one float tensor [n, 3, h, w], values 0...255 (the models normalise internally). */

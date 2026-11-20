@@ -34,6 +34,17 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
         /** Global-embedding cosine similarity above which two photos count as the same kind of scene. */
         const val similarScene = 0.80
 
+        /** Run two independent pieces of CPU work side by side. */
+        internal fun <T> both(a: () -> T, b: () -> T): Pair<T, T> {
+            val fb = java.util.concurrent.CompletableFuture.supplyAsync { b() }
+            val ra = a()
+            return try {
+                Pair(ra, fb.get())
+            } catch (e: java.util.concurrent.ExecutionException) {
+                throw e.cause ?: e
+            }
+        }
+
         fun cosine(x: FloatArray, y: FloatArray): Double {
             var d = 0.0; var nx = 0.0; var ny = 0.0
             for (i in 0 until min(x.size, y.size)) {
@@ -122,11 +133,13 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
         segs = segs.sortedByDescending { it.area * (if (it.thing) 3 else 1) }.take(maxObjects).sortedByDescending { it.area }
         val ia = info.ia
         val hv = towerSignals(p.m.s)
-        for (s in segs) {
-            check()
-            val mod = Objects.remove(p.std, s)
-            val e = nets.embed(ImagePrep.views(mod, info.inputSize))
-            val r = nets.tower(e[0], e.subList(1, e.size), hv)
+        check()
+        // painting out is plain CPU work, so the objects are prepared side by side, then embedded in batches
+        val views = segs.parallelStream().map { ImagePrep.views(Objects.remove(p.std, it), info.inputSize) }.collect(java.util.stream.Collectors.toList())
+        check()
+        val e = nets.embed(views.flatten())
+        for ((k, s) in segs.withIndex()) {
+            val r = nets.tower(e[k * 5], e.subList(k * 5 + 1, k * 5 + 5), hv)
             s.delta = info.percentile(r[ia], ia) - p.percentile[ia]
             s.lean = (p.raw[ia] - r[ia]) / info.heads[ia].refStd
         }
@@ -170,11 +183,11 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
     ): QuickVerdict {
         val t0 = System.nanoTime()
         progress(Stage.READING)
-        val dA = decoder.decode(bytesA); val dB = decoder.decode(bytesB)
+        val (dA, dB) = both({ decoder.decode(bytesA) }, { decoder.decode(bytesB) })
         val stdA = ImagePrep.standardImage(dA.full, info.stdLongSide); val stdB = ImagePrep.standardImage(dB.full, info.stdLongSide)
         check()
         progress(Stage.MEASURING)
-        val mA = Signals.measure(stdA); val mB = Signals.measure(stdB)
+        val (mA, mB) = both({ Signals.measure(stdA) }, { Signals.measure(stdB) })
         check()
         progress(Stage.SCORING)
         val a = featurize(stdA, mA, "Shot A", dA, ExifInfo())
@@ -193,12 +206,12 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
     ): Comparison {
         val t0 = System.nanoTime()
         progress(Stage.READING)
-        val dA = decoder.decode(bytesA); val dB = decoder.decode(bytesB)
+        val (dA, dB) = both({ decoder.decode(bytesA) }, { decoder.decode(bytesB) })
         val stdA = ImagePrep.standardImage(dA.full, info.stdLongSide); val stdB = ImagePrep.standardImage(dB.full, info.stdLongSide)
         check()
 
         progress(Stage.MEASURING)
-        val mA = Signals.measure(stdA); val mB = Signals.measure(stdB)
+        val (mA, mB) = both({ Signals.measure(stdA) }, { Signals.measure(stdB) })
         check()
 
         progress(Stage.SCORING)

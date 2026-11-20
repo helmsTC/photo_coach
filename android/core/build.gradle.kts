@@ -10,9 +10,9 @@ kotlin { jvmToolchain(17) }
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
     // Same Java API as onnxruntime-android, which the app supplies at run time.
-    compileOnly("com.microsoft.onnxruntime:onnxruntime:1.19.2")
+    compileOnly("com.microsoft.onnxruntime:onnxruntime:1.22.0")
 
-    testImplementation("com.microsoft.onnxruntime:onnxruntime:1.19.2")
+    testImplementation("com.microsoft.onnxruntime:onnxruntime:1.22.0")
     testImplementation(kotlin("test"))
 }
 
