@@ -12,7 +12,7 @@ cd android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Minimum Android version is 8.0 (API 26). The debug APK is about 400 MB: 313 MB of models, plus native libraries for four CPU types and unshrunk code. A release build for one CPU type is much smaller.
+Minimum Android version is 8.0 (API 26). The debug APK is about 280 MB: 183 MB of models, plus native libraries for four CPU types and unshrunk code. A release build for one CPU type is much smaller.
 
 If the checkout sits on a slow or shared drive (for example a Windows drive under WSL), build outside the source tree:
 
@@ -58,9 +58,9 @@ In a debug build, tap **⋯ > Run self-test** on the home screen. It runs the sa
 
 | File | Size | What |
 |---|---|---|
-| `encoder.onnx` | 176 MB | OpenAI CLIP ViT-B/32 image encoder (MIT), 224 x 224 -> 512-d, run on 5 views per photo |
+| `encoder.onnx` | 88 MB | OpenAI CLIP ViT-B/32 image encoder (MIT) with 8-bit weights, 224 x 224 -> 512-d, run on 5 views per photo |
 | `tower.onnx` | 6 MB | the twin tower: embeddings + measured signals -> 20 attribute scores |
-| `segmenter.onnx` | 87 MB | DETR-ResNet50 panoptic (`facebook/detr-resnet-50-panoptic`, Apache-2.0), 448 x 448 -> one COCO class per pixel |
+| `segmenter.onnx` | 45 MB | DETR-ResNet50 panoptic (`facebook/detr-resnet-50-panoptic`, Apache-2.0), weights stored as 8-bit lookup tables, 448 x 448 -> one COCO class per pixel |
 | `ai_detector.onnx` | 44 MB | Community Forensics ViT-S/16-384 (MIT), P(AI-generated) |
 
 Weights are stored as 16-bit floats behind `Cast` nodes that ONNX Runtime folds back to 32-bit at load time, so the files are half size but inference is ordinary float32 on the CPU. The models are stored uncompressed in the APK and memory-mapped, so they are not copied to app storage.
@@ -108,5 +108,5 @@ adb shell am start -n com.mosaiclens.apertureiq/.MainActivity --ez selftest true
 ## Before a Play release
 
 - **Signing and bundle:** add a release signing config and build an app bundle (`./gradlew :app:bundleRelease`). The release build shrinks code with R8 (`proguard-rules.pro` keeps ONNX Runtime and the serializers).
-- **Size:** the models alone are 313 MB, which is over Play's size limit for an app's base module (check the current figure in the Play Console help). Before a Play release, move the models into an install-time asset pack (Play Asset Delivery), or shrink the encoder: 8-bit weights halve it to about 88 MB but move scores by 1-2 percentile points on average.
+- **Size:** Play allows 200 MB of compressed download for the base module. The models are 183 MB (166 MB compressed); with the 64-bit ARM libraries and code the download is estimated at about 180-190 MB. Check the real figure in Play Console's app size report after uploading a bundle. The AI detector stays 16-bit because 8-bit weights changed its verdicts; if more room is needed, move it or the segmenter into an install-time asset pack (Play Asset Delivery).
 - **Model licences:** the About screen credits each model. All four allow commercial use: CLIP ViT-B/32 (MIT), Community Forensics (MIT), DETR (Apache 2.0); the tower is our own. Verify each on its model card before shipping.
