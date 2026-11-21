@@ -28,20 +28,11 @@ class OrtNetworks(
     private val source: (String) -> Any?,
     private val segLabels: SegmenterLabels?,
     private val threads: Int = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
-    /** Applied to the options of the three big models (e.g. to add NNAPI / XNNPACK); the tower stays on plain CPU. */
-    private val configure: (OrtSession.SessionOptions) -> Unit = {},
+    /** Applied to the options of the three big models, by name (e.g. to add NNAPI / XNNPACK); the tower stays on plain CPU. */
+    private val configure: (String, OrtSession.SessionOptions) -> Unit = { _, _ -> },
 ) : Networks, AutoCloseable {
 
-    /** Time spent inside each network since the last [resetStats] (for profiling on a device).
-     *  Declared before the sessions: loading them is timed too. */
-    private val nanos = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val calls = java.util.concurrent.ConcurrentHashMap<String, Int>()
-    private inline fun <T> timed(name: String, n: Int, body: () -> T): T {
-        val t0 = System.nanoTime()
-        try { return body() } finally { nanos.merge(name, System.nanoTime() - t0, Long::plus); calls.merge(name, n, Int::plus) }
-    }
-    fun resetStats() { nanos.clear(); calls.clear() }
-    fun stats(): String = nanos.keys.sorted().joinToString(", ") { "$it ${"%.1f".format(java.util.Locale.US, nanos[it]!! / 1e9)} s / ${calls[it]}" }
+    private inline fun <T> timed(name: String, n: Int, body: () -> T): T = Prof.t("net " + name, n, body)
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val encoder: OrtSession = open("encoder", true) ?: throw JudgeError.MissingResource("encoder.onnx")
@@ -50,6 +41,8 @@ class OrtNetworks(
     private var detNet: OrtSession? = null
     private var segTried = false
     private var detTried = false
+    // one lock per network: different networks may run at the same time, one network never runs twice at once
+    private val encLock = Any(); private val towerLock = Any(); private val segLock = Any(); private val detLock = Any()
 
     private fun open(name: String, accelerated: Boolean): OrtSession? = timed("load $name", 1) { open0(name, accelerated) }
 
@@ -58,7 +51,7 @@ class OrtNetworks(
         val opts = OrtSession.SessionOptions()
         opts.setIntraOpNumThreads(threads)
         opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-        if (accelerated) configure(opts)
+        if (accelerated) configure(name, opts)
         return when (src) {
             is String -> env.createSession(src, opts)
             is java.nio.ByteBuffer -> env.createSession(src, opts)
@@ -84,8 +77,9 @@ class OrtNetworks(
         return OnnxTensor.createTensor(env, FloatBuffer.wrap(buf), longArrayOf(views.size.toLong(), 3, h.toLong(), w.toLong()))
     }
 
-    @Synchronized
-    override fun embed(views: List<RGBImage>): List<FloatArray> {
+    override fun embed(views: List<RGBImage>): List<FloatArray> = synchronized(encLock) { embedLocked(views) }
+
+    private fun embedLocked(views: List<RGBImage>): List<FloatArray> {
         if (views.isEmpty()) return emptyList()
         val out = ArrayList<FloatArray>(views.size)
         // modest batches keep peak memory flat on phones
@@ -101,8 +95,9 @@ class OrtNetworks(
         return out
     }
 
-    @Synchronized
-    override fun tower(g: FloatArray, l: List<FloatArray>, h: FloatArray): DoubleArray {
+    override fun tower(g: FloatArray, l: List<FloatArray>, h: FloatArray): DoubleArray = synchronized(towerLock) { towerLocked(g, l, h) }
+
+    private fun towerLocked(g: FloatArray, l: List<FloatArray>, h: FloatArray): DoubleArray {
         val dim = g.size
         val lf = FloatArray(4 * dim)
         for (i in 0 until 4) System.arraycopy(l[i], 0, lf, i * dim, dim)
@@ -121,7 +116,7 @@ class OrtNetworks(
     override val segmenter: SemanticSegmenter?
         get() {
             val lab = segLabels ?: return null
-            synchronized(this) {
+            synchronized(segLock) {
                 if (!segTried) {
                     segTried = true
                     segNet = try { open("segmenter", true) } catch (e: Exception) { null }
@@ -133,7 +128,7 @@ class OrtNetworks(
                 override val size = lab.size
                 override val labels = lab.labels
                 override fun isThing(id: Int) = things.contains(id)
-                override fun classMap(square: RGBImage): IntArray? = synchronized(this@OrtNetworks) {
+                override fun classMap(square: RGBImage): IntArray? = synchronized(segLock) {
                     try {
                         nchw(listOf(square)).use { x ->
                             timed("segmenter", 1) { net.run(mapOf("image" to x)) }.use { res ->
@@ -148,13 +143,24 @@ class OrtNetworks(
             }
         }
 
-    @Synchronized
-    override fun aiProbability(chw: FloatArray): Double? {
+    /** Load the segmenter ahead of its first use (Pro comparisons need it right after the verdict). */
+    fun preloadSegmenter() { segmenter }
+
+    /** Load the AI detector ahead of its first use (it otherwise loads inside the first check). */
+    fun preloadDetector() { synchronized(detLock) { detector() } }
+
+    private fun detector(): OrtSession? {
         if (!detTried) {
             detTried = true
             detNet = try { open("ai_detector", true) } catch (e: Exception) { null }
         }
-        val net = detNet ?: return null
+        return detNet
+    }
+
+    override fun aiProbability(chw: FloatArray): Double? = synchronized(detLock) { aiLocked(chw) }
+
+    private fun aiLocked(chw: FloatArray): Double? {
+        val net = detector() ?: return null
         val s = DetectorInput.crop.toLong()
         OnnxTensor.createTensor(env, FloatBuffer.wrap(chw), longArrayOf(1, 3, s, s)).use { x ->
             timed("detector", 1) { net.run(mapOf("image" to x)) }.use { res ->
@@ -163,8 +169,10 @@ class OrtNetworks(
         }
     }
 
-    @Synchronized
     override fun close() {
-        encoder.close(); towerNet.close(); segNet?.close(); detNet?.close()
+        synchronized(encLock) { encoder.close() }
+        synchronized(towerLock) { towerNet.close() }
+        synchronized(segLock) { segNet?.close() }
+        synchronized(detLock) { detNet?.close() }
     }
 }

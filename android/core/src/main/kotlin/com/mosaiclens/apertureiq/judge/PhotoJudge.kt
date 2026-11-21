@@ -31,6 +31,9 @@ interface Networks {
 class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val decoder: Decoder) {
 
     companion object {
+        /** Thread priority of the plain-CPU stages (see cpuPool). */
+        @Volatile var cpuPriority: Int = Thread.MIN_PRIORITY
+
         /** Global-embedding cosine similarity above which two photos count as the same kind of scene. */
         const val similarScene = 0.80
 
@@ -68,8 +71,9 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
 
     // ---- scoring one photo
 
-    private fun featurize(std: RGBImage, m: Measurement, name: String, d: Decoded, exif: ExifInfo): ScoredPhoto {
-        val e = nets.embed(ImagePrep.views(std, info.inputSize))
+    private fun embedViews(std: RGBImage): List<FloatArray> = nets.embed(Prof.t("views") { ImagePrep.views(std, info.inputSize) })
+
+    private fun featurize(std: RGBImage, m: Measurement, name: String, d: Decoded, exif: ExifInfo, e: List<FloatArray> = embedViews(std)): ScoredPhoto {
         val raw = nets.tower(e[0], e.subList(1, e.size), towerSignals(m.s))
         if (raw.size != info.heads.size) throw JudgeError.Model("expected ${info.heads.size} scores, got ${raw.size}")
         val pct = percentiles(raw)
@@ -85,8 +89,8 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
 
     /** Score an edited version of a photo (tone/colour signals re-measured, as the desktop app does). */
     private fun scoreEdited(img: RGBImage): Pair<DoubleArray, Double> {
-        val e = nets.embed(ImagePrep.views(img, info.inputSize))
-        val pct = percentiles(nets.tower(e[0], e.subList(1, e.size), towerSignals(Signals.toneColor(img))))
+        val e = nets.embed(Prof.t("views") { ImagePrep.views(img, info.inputSize) })
+        val pct = percentiles(nets.tower(e[0], e.subList(1, e.size), towerSignals(Prof.t("toneColor") { Signals.toneColor(img) })))
         return Pair(pct, overall(pct))
     }
 
@@ -129,13 +133,15 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
      */
     private fun objectEffects(p: ScoredPhoto, check: () -> Unit, maxObjects: Int = 10): List<Segment> {
         // compact things and sizeable background regions, things first (objects.py / Engine.object_effects)
-        var segs = Objects.detect(p.std, nets.segmenter).filter { if (it.thing) it.area >= 0.002 else it.area >= 0.015 }
+        var segs = Prof.t("detect (incl. segmenter)") { Objects.detect(p.std, nets.segmenter) }.filter { if (it.thing) it.area >= 0.002 else it.area >= 0.015 }
         segs = segs.sortedByDescending { it.area * (if (it.thing) 3 else 1) }.take(maxObjects).sortedByDescending { it.area }
         val ia = info.ia
         val hv = towerSignals(p.m.s)
         check()
         // painting out is plain CPU work, so the objects are prepared side by side, then embedded in batches
-        val views = segs.parallelStream().map { ImagePrep.views(Objects.remove(p.std, it), info.inputSize) }.collect(java.util.stream.Collectors.toList())
+        val views = Prof.t("paint-out wall") {
+            segs.map { g -> cpuPool.submit(java.util.concurrent.Callable { check(); ImagePrep.views(Prof.t("remove") { Objects.remove(p.std, g) }, info.inputSize) }) }.map { it.await() }
+        }
         check()
         // A detail crop the object does not reach is pixel-for-pixel the original crop, whose embedding
         // we already have: only the views that actually changed go through the encoder.
@@ -177,6 +183,72 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
 
     // ---- the free tier: verdict only
 
+    // ---- running stages side by side
+
+    /**
+     * Independent stages run at the same time: the networks keep the fast cores busy while measuring,
+     * scene matching, painting and rendering use the others.  Every stage computes exactly what it
+     * would alone, so results do not depend on the timing.
+     */
+    private val pool = java.util.concurrent.Executors.newCachedThreadPool { r -> Thread(r, "judge").apply { isDaemon = true } }
+
+    /**
+     * Plain CPU work (measuring, matching, painting, rendering) runs at low priority, so on phones with
+     * a few fast cores and several slow ones it yields the fast cores to the networks.
+     */
+    private val cpuPool = java.util.concurrent.Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors().coerceIn(2, 8)) { r ->
+        Thread(r, "judge-cpu").apply { isDaemon = true; priority = cpuPriority }
+    }
+
+    private class Run(val check: () -> Unit) {
+        @Volatile var stopped = false
+        /** Called inside stages: stops work that is no longer wanted. */
+        fun ok() { if (stopped) throw java.util.concurrent.CancellationException(); check() }
+    }
+
+    private fun <T> Run.go(body: () -> T): java.util.concurrent.Future<T> = pool.submit(java.util.concurrent.Callable { ok(); body() })
+
+    private fun <T> Run.cpu(body: () -> T): java.util.concurrent.Future<T> = cpuPool.submit(java.util.concurrent.Callable { ok(); body() })
+
+    private fun <T> java.util.concurrent.Future<T>.await(): T = try { get() } catch (e: java.util.concurrent.ExecutionException) { throw e.cause ?: e }
+
+    private inline fun <T> running(noinline check: () -> Unit, body: (Run) -> T): T {
+        val run = Run(check)
+        try { return body(run) } catch (e: Throwable) { run.stopped = true; throw e }
+    }
+
+    private class First(val dA: Decoded, val dB: Decoded, val a: ScoredPhoto, val b: ScoredPhoto, val au: List<Authenticity>)
+
+    /** Read, measure, score and AI-check both photos: everything the verdict needs. */
+    private fun first(
+        run: Run, bytesA: ByteArray, bytesB: ByteArray, nameA: String, nameB: String, exif: Boolean,
+        known: List<Authenticity>?, progress: (Stage) -> Unit,
+    ): First {
+        progress(Stage.READING)
+        val (dA, dB) = Prof.t("decode") { both({ decoder.decode(bytesA) }, { decoder.decode(bytesB) }) }
+        val (stdA, stdB) = Prof.t("standard image") { both({ ImagePrep.standardImage(dA.full, info.stdLongSide) }, { ImagePrep.standardImage(dB.full, info.stdLongSide) }) }
+        run.ok()
+
+        progress(Stage.MEASURING)
+        val fmA = run.cpu { Prof.t("measure") { Signals.measure(stdA) } }
+        val fmB = run.cpu { Prof.t("measure") { Signals.measure(stdB) } }
+        val fe = run.go { Pair(embedViews(stdA), embedViews(stdB)) }
+        val fau = run.go { Prof.t("authenticity") { authenticity(bytesA, dA, bytesB, dB, known) } }
+        val mA = fmA.await(); val mB = fmB.await()
+        run.ok()
+
+        progress(Stage.SCORING)
+        val (eA, eB) = fe.await()
+        val a = featurize(stdA, mA, nameA, dA, if (exif) dA.exif else ExifInfo(), eA)
+        val b = featurize(stdB, mB, nameB, dB, if (exif) dB.exif else ExifInfo(), eB)
+        run.ok()
+
+        progress(Stage.AUTHENTICITY)
+        return First(dA, dB, a, b, fau.await())
+    }
+
+    // ---- the free tier: verdict only
+
     /**
      * Just the twin network's call: which shot wins and how decisively.  Skips scene matching, objects,
      * attention maps, edits and coaching, so it's a fraction of the full pipeline's time.
@@ -185,25 +257,17 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
     fun quickVerdict(
         bytesA: ByteArray, bytesB: ByteArray, known: List<Authenticity>? = null,
         progress: (Stage) -> Unit = {}, check: () -> Unit = {},
-    ): QuickVerdict {
+    ): QuickVerdict = running(check) { run ->
         val t0 = System.nanoTime()
-        progress(Stage.READING)
-        val (dA, dB) = both({ decoder.decode(bytesA) }, { decoder.decode(bytesB) })
-        val stdA = ImagePrep.standardImage(dA.full, info.stdLongSide); val stdB = ImagePrep.standardImage(dB.full, info.stdLongSide)
-        check()
-        progress(Stage.MEASURING)
-        val (mA, mB) = both({ Signals.measure(stdA) }, { Signals.measure(stdB) })
-        check()
-        progress(Stage.SCORING)
-        val a = featurize(stdA, mA, "Shot A", dA, ExifInfo())
-        val b = featurize(stdB, mB, "Shot B", dB, ExifInfo())
-        check()
-        progress(Stage.AUTHENTICITY)
-        val au = authenticity(bytesA, dA, bytesB, dB, known)
-        return QuickVerdict(listOf(a.std, b.std), listOf(a.aspect, b.aspect), pA(a, b), (System.nanoTime() - t0) / 1e9, au)
+        val f = first(run, bytesA, bytesB, "Shot A", "Shot B", false, known, progress)
+        QuickVerdict(listOf(f.a.std, f.b.std), listOf(f.a.aspect, f.b.aspect), pA(f.a, f.b), (System.nanoTime() - t0) / 1e9, f.au)
     }
 
     // ---- the twin comparison
+
+    private class Scene(val al: Alignment, val relation: String, val frame: Framing?, val masks: Array<BooleanArray?>)
+
+    private class Found(val objects: List<Segment>, val geometry: SceneGeometry?, val overlay: RGBImage?)
 
     fun compare(
         bytesA: ByteArray, bytesB: ByteArray, nameA: String, nameB: String, known: List<Authenticity>? = null,
@@ -211,20 +275,11 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
         /** Receives the verdict as soon as it is known (scores, attributes, AI check), before the slow
          *  parts - objects, attention, edit previews and the coaching built on them - are worked out. */
         early: (Comparison) -> Unit = {},
-    ): Comparison {
+    ): Comparison = running(check) { run ->
         val t0 = System.nanoTime()
-        progress(Stage.READING)
-        val (dA, dB) = both({ decoder.decode(bytesA) }, { decoder.decode(bytesB) })
-        val stdA = ImagePrep.standardImage(dA.full, info.stdLongSide); val stdB = ImagePrep.standardImage(dB.full, info.stdLongSide)
-        check()
-
-        progress(Stage.MEASURING)
-        val (mA, mB) = both({ Signals.measure(stdA) }, { Signals.measure(stdB) })
-        check()
-
-        progress(Stage.SCORING)
-        val a = featurize(stdA, mA, nameA, dA, dA.exif)
-        val b = featurize(stdB, mB, nameB, dB, dB.exif)
+        val f = first(run, bytesA, bytesB, nameA, nameB, true, known, progress)
+        val a = f.a; val b = f.b; val au = f.au
+        val stdA = a.std; val stdB = b.std
         val photos = listOf(a, b)
 
         // verdict
@@ -232,82 +287,109 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
         val pa = pA(a, b)
         val w = if (pa >= 0.5) 0 else 1
         val l = 1 - w
-        check()
-
-        progress(Stage.AUTHENTICITY)
-        val au = authenticity(bytesA, dA, bytesB, dB, known)
-        check()
-
         val sim = cosine(a.g, b.g)
         early(Coach.build(
             Coach.Input(info, photos, w, l, null, null, if (sim >= similarScene) "similar" else "different", listOf(Pair(emptyList(), null), Pair(emptyList(), null))),
             pa, listOf(PhotoExtras(authenticity = au[0]), PhotoExtras(authenticity = au[1])), sim, emptyList(), (System.nanoTime() - t0) / 1e9,
         ))
+        run.ok()
 
+        // everything below starts now and is collected in the order the stages are shown
         progress(Stage.MATCHING)
-        val al = SceneMatch.align(stdA, stdB)
-        val relation = if (al.aligned) "aligned" else if (sim >= similarScene) "similar" else "different"
-        var frame: Framing? = null
-        val masks = arrayOfNulls<BooleanArray>(2)
-        val extras = listOf(PhotoExtras(authenticity = au[0]), PhotoExtras(authenticity = au[1]))
-        val hinv = if (al.aligned) al.H.inverse else null
-        if (al.aligned && hinv != null) {
-            masks[0] = SceneMatch.overlapMask(stdA.width, stdA.height, al.H)
-            masks[1] = SceneMatch.overlapMask(stdB.width, stdB.height, hinv)
-            val quad = if (l == 0) al.quadBinA else al.quadAinB          // the winner's frame inside the loser's
-            frame = SceneMatch.framing(quad, photos[l].aspect)
-            extras[0].otherFrame = al.quadBinA
-            extras[1].otherFrame = al.quadAinB
+        val fscene = run.cpu {
+            val al = Prof.t("align") { SceneMatch.align(stdA, stdB) }
+            val relation = if (al.aligned) "aligned" else if (sim >= similarScene) "similar" else "different"
+            var frame: Framing? = null
+            val masks = arrayOfNulls<BooleanArray>(2)
+            val hinv = if (al.aligned) al.H.inverse else null
+            if (al.aligned && hinv != null) {
+                masks[0] = SceneMatch.overlapMask(stdA.width, stdA.height, al.H)
+                masks[1] = SceneMatch.overlapMask(stdB.width, stdB.height, hinv)
+                val quad = if (l == 0) al.quadBinA else al.quadAinB      // the winner's frame inside the loser's
+                frame = SceneMatch.framing(quad, photos[l].aspect)
+            }
+            Scene(al, relation, frame, masks)
         }
-        check()
+        val ffound = photos.map { p ->
+            run.go {
+                val segs = objectEffects(p, run::ok)
+                val si = Objects.pickSubject(segs, p.m["subject_x"], p.m["subject_y"])
+                Objects.assignRoles(segs, si)
+                Found(
+                    segs, Prof.t("geometry") { Objects.geometry(p.std, segs, si, p.m.detail) },
+                    if (segs.isNotEmpty()) Prof.t("overlay objects") { Overlays.objects(p.std, segs) } else null,
+                )
+            }
+        }
+        val fheat = run.go {
+            Prof.t("occlusion total") { photos.map { p -> run.ok(); val h = occlusion(p); Prof.t("overlay attention") { Overlays.impact(p.std, h) } } }
+        }
+        val scale = max(a.m.detail.max, b.m.detail.max)
+        val fbase = photos.map { p ->
+            run.cpu {
+                Pair(Prof.t("overlay clipping") { Overlays.clipping(p.std) }, Prof.t("overlay focus") { Overlays.focus(p.std, p.m.detail, scale) })
+            }
+        }
+        val flabs = run.cpu { Prof.t("lab") { listOf(LabImage(stdA), LabImage(stdB)) } }
+        val fedit = run.go {
+            val labs = flabs.await()
+            val sc = fscene.await()
+            run.ok()
+            val recipe = Prof.t("lookRecipe") { SceneMatch.lookRecipe(labs[l], labs[w], sc.masks[l], sc.masks[w], sc.relation != "different") }
+            val oW = photos[w].overall; val oL = photos[l].overall
+            fun closure(o: Double) = max(-1.0, min(1.5, (o - oL) / max(oW - oL, 1e-6)))
+            val previews = ArrayList<Preview>()
+            val edited = Prof.t("applyLook") { SceneMatch.applyLook(labs[l], recipe) }
+            val pe = scoreEdited(edited)
+            previews.add(Preview("edit", edited, pe.second, pe.first[ia], pe.first[it], closure(pe.second)))
+            val fr = sc.frame
+            if (fr != null && fr.zoom >= 1.08 && fr.inside >= 0.85) {
+                val hlw = if (l == 0) sc.al.H else sc.al.H.inverse
+                val crop = hlw?.let { SceneMatch.cropToOther(photos[l].std, it, photos[w].std.width, photos[w].std.height) }
+                if (crop != null) {
+                    val cropLab = LabImage(crop)
+                    val ce = SceneMatch.applyLook(cropLab, SceneMatch.lookRecipe(cropLab, labs[w], colorOK = true))
+                    val pc = scoreEdited(ce)
+                    previews.add(Preview("crop_edit", ce, pc.second, pc.first[ia], pc.first[it], closure(pc.second)))
+                }
+            }
+            Pair(recipe, previews)
+        }
+
+        val sc = fscene.await()
+        val extras = listOf(PhotoExtras(authenticity = au[0]), PhotoExtras(authenticity = au[1]))
+        if (sc.frame != null) {
+            extras[0].otherFrame = sc.al.quadBinA
+            extras[1].otherFrame = sc.al.quadAinB
+        }
+        run.ok()
 
         progress(Stage.OBJECTS)
         progress(Stage.TESTING)
         for (k in 0 until 2) {
-            val segs = objectEffects(photos[k], check)
-            val s = photos[k].m
-            val si = Objects.pickSubject(segs, s["subject_x"], s["subject_y"])
-            Objects.assignRoles(segs, si)
-            extras[k].objects = segs
-            extras[k].geometry = Objects.geometry(photos[k].std, segs, si, s.detail)
+            val found = ffound[k].await()
+            extras[k].objects = found.objects
+            extras[k].geometry = found.geometry
+            found.overlay?.let { extras[k].layers[Lens.OBJECTS] = it }
+            run.ok()
         }
 
         progress(Stage.ATTENTION)
-        check()
-        val heat = photos.map { occlusion(it) }
-        check()
+        val heat = fheat.await()
+        run.ok()
 
         progress(Stage.EDITING)
-        val labs = listOf(LabImage(stdA), LabImage(stdB))
-        val recipe = SceneMatch.lookRecipe(labs[l], labs[w], masks[l], masks[w], relation != "different")
-        val oW = photos[w].overall; val oL = photos[l].overall
-        fun closure(o: Double) = max(-1.0, min(1.5, (o - oL) / max(oW - oL, 1e-6)))
-        val previews = ArrayList<Preview>()
-        val edited = SceneMatch.applyLook(labs[l], recipe)
-        val pe = scoreEdited(edited)
-        previews.add(Preview("edit", edited, pe.second, pe.first[ia], pe.first[it], closure(pe.second)))
-        val fr = frame
-        if (fr != null && fr.zoom >= 1.08 && fr.inside >= 0.85) {
-            val hlw = if (l == 0) al.H else al.H.inverse
-            val crop = hlw?.let { SceneMatch.cropToOther(photos[l].std, it, photos[w].std.width, photos[w].std.height) }
-            if (crop != null) {
-                val cropLab = LabImage(crop)
-                val ce = SceneMatch.applyLook(cropLab, SceneMatch.lookRecipe(cropLab, labs[w], colorOK = true))
-                val pc = scoreEdited(ce)
-                previews.add(Preview("crop_edit", ce, pc.second, pc.first[ia], pc.first[it], closure(pc.second)))
-            }
-        }
-        check()
+        val (recipe, previews) = fedit.await()
+        run.ok()
 
         progress(Stage.COACHING)
-        val scale = max(mA.detail.max, mB.detail.max)
         for (k in 0 until 2) {
-            extras[k].layers[Lens.CLIPPING] = Overlays.clipping(photos[k].std)
-            extras[k].layers[Lens.FOCUS] = Overlays.focus(photos[k].std, photos[k].m.detail, scale)
-            extras[k].layers[Lens.ATTENTION] = Overlays.impact(photos[k].std, heat[k])
-            if (extras[k].objects.isNotEmpty()) extras[k].layers[Lens.OBJECTS] = Overlays.objects(photos[k].std, extras[k].objects)
+            val base = fbase[k].await()
+            extras[k].layers[Lens.CLIPPING] = base.first
+            extras[k].layers[Lens.FOCUS] = base.second
+            extras[k].layers[Lens.ATTENTION] = heat[k]
         }
-        val ctx = Coach.Input(info, photos, w, l, recipe, frame, relation, extras.map { Pair(it.objects, it.geometry) })
-        return Coach.build(ctx, pa, extras, sim, previews, (System.nanoTime() - t0) / 1e9)
+        val ctx = Coach.Input(info, photos, w, l, recipe, sc.frame, sc.relation, extras.map { Pair(it.objects, it.geometry) })
+        Prof.t("coach build") { Coach.build(ctx, pa, extras, sim, previews, (System.nanoTime() - t0) / 1e9) }
     }
 }

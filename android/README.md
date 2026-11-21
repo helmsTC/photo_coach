@@ -96,14 +96,24 @@ Same as iOS: **Free** shows which shot wins (read, measure, score and AI-check s
 
 ## Measured on a device
 
-TCL NXTPAPER 11 Plus (MediaTek MT8781, 2 big + 6 little cores, 8 GB, Android 15), debug build:
+TCL NXTPAPER 11 Plus (MediaTek MT8781, 2 fast + 6 slow cores, 8 GB, Android 15), debug build, Pro comparison of a sample pair with the app already open for a few seconds:
 
-- Self-test passes. Scoring one photo takes about 5 s the first time (4.6 s of that is loading the encoder).
-- A full Pro comparison takes 75-85 s: about 30 s in the encoder (roughly 110-120 images at 0.25 s each), 11 s in the segmenter (5.6 s per photo), 9 s loading models (first comparison only) and about 25 s of measuring, matching and rendering in Kotlin.
-- The verdict is shown as soon as it is known, about 16 s in (`early` callback of `PhotoJudge.compare`). Overview, Scores and AI check are complete at that point; Inspect and Coach show a progress list until the object, attention and edit stages finish. Nothing about the analysis itself changes.
-- Native memory after a Pro comparison is 0.66 GB. With ONNX Runtime's memory pool left on it was 2.5 GB, so `Engine.kt` turns it off; the comments there record the thread and XNNPACK measurements too.
+| | First device run | Now |
+|---|---|---|
+| Verdict on screen | 72 s (with everything else) | about 7 s |
+| Everything finished | 72 s | 43-48 s |
+| Native memory afterwards | 2.5 GB | 0.67 GB |
 
-Debug builds log `STAGE` and `TIME` lines under the logcat tag `ApertureIQ`, and read `adb shell setprop debug.aiq.threads|xnn|arena <n>` so runtime settings can be tried without rebuilding.
+What changed, none of it altering results (the JVM tests give the same numbers):
+
+- **Verdict first.** `PhotoJudge.compare` hands over a first result after scoring and the AI check; Inspect and Coach show a progress list until the rest arrives.
+- **Models load while photos are being chosen** (`Engine.warm`): 5-9 s that used to be part of the first comparison.
+- **Stages run side by side.** The networks keep the fast cores; measuring, scene matching, object painting and overlays run on a low-priority pool. Each network has its own lock, so the segmenter and the encoder can overlap. The eight per-photo measurements also run in parallel.
+- **Runtime settings** (`Engine.kt`, with the measurements in a comment): one model thread per fast core, ONNX Runtime's memory pool off, no XNNPACK, no NNAPI.
+
+What is left is mostly network time on the two fast cores: about 20 s of encoder (107-123 images at 0.2 s) and 11 s of segmenter when run alone.
+
+Self-test passes on the device. Debug builds log `STAGE` and `TIME` lines (per stage, per step, per network) under the logcat tag `ApertureIQ`, and read `adb shell setprop debug.aiq.threads|xnn|nnapi|arena|cpuprio|warm <n>` so settings can be tried without rebuilding (`xnn` and `nnapi` are bit masks: 1 encoder, 2 segmenter, 4 detector).
 
 ## Debug launch options
 

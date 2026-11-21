@@ -43,18 +43,31 @@ object Signals {
     const val tileGrid = 12
 
     fun measure(img: RGBImage): Measurement {
-        val s = HashMap<String, Double>()
-        s.putAll(tone(img))
-        s.putAll(color(img))
-        val (f, detail, crisp) = focus(img)
-        s.putAll(f)
-        s.putAll(noise(img))
-        s["log_long_side"] = ln(max(img.width, img.height) / 1024.0 + 1e-6)
-        s["aspect"] = img.width.toDouble() / img.height
-        s.putAll(horizon(img))
-        val (sal, salMap) = saliency(img, detail)
-        s.putAll(sal)
-        return Measurement(s, detail, crisp, salMap, palette(img), histogram(img))
+        // The measurements are independent of each other (saliency only needs focus's detail map),
+        // so they run side by side; the result is the same as running them in turn.
+        fun <T> go(name: String, body: () -> T) = java.util.concurrent.CompletableFuture.supplyAsync { Prof.t("m.$name") { body() } }
+        val fTone = go("tone") { tone(img) }
+        val fColor = go("color") { color(img) }
+        val fNoise = go("noise") { noise(img) }
+        val fHorizon = go("horizon") { horizon(img) }
+        val fPalette = go("palette") { palette(img) }
+        val fHist = go("histogram") { histogram(img) }
+        try {
+            val (f, detail, crisp) = Prof.t("m.focus") { focus(img) }
+            val (sal, salMap) = Prof.t("m.saliency") { saliency(img, detail) }
+            val s = HashMap<String, Double>()
+            s.putAll(fTone.get())
+            s.putAll(fColor.get())
+            s.putAll(f)
+            s.putAll(fNoise.get())
+            s["log_long_side"] = ln(max(img.width, img.height) / 1024.0 + 1e-6)
+            s["aspect"] = img.width.toDouble() / img.height
+            s.putAll(fHorizon.get())
+            s.putAll(sal)
+            return Measurement(s, detail, crisp, salMap, fPalette.get(), fHist.get())
+        } catch (e: java.util.concurrent.ExecutionException) {
+            throw e.cause ?: e
+        }
     }
 
     /** The tone / colour / size signals of an edited image (what the tower reads). */

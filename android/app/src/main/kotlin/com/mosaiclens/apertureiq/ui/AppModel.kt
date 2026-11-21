@@ -53,6 +53,7 @@ class DebugOptions(
 )
 
 class AppModel(private val app: Application) : AndroidViewModel(app) {
+
     val store = Store(app, viewModelScope)
     val history = History(app)
 
@@ -78,6 +79,11 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
     private var fromSample = false
     private var job: Job? = null
     private var debugApplied = false
+
+    init {
+        // load the models in the background; the segmenter joins them once the Pro tier is selected
+        viewModelScope.launch { androidx.compose.runtime.snapshotFlow { tier }.collect { Engine.warm(app, it == Tier.PRO) } }
+    }
 
     val ready: Boolean get() = data[0] != null && data[1] != null
 
@@ -154,7 +160,7 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             try {
                 val t0 = System.nanoTime()
-                Engine.networks?.resetStats()
+                com.mosaiclens.apertureiq.judge.Prof.reset()
                 val timing = com.mosaiclens.apertureiq.BuildConfig.DEBUG
                 val progress: (Stage) -> Unit = { s ->
                     if (timing) android.util.Log.i("ApertureIQ", "STAGE %6.1f s  %s".format(java.util.Locale.US, (System.nanoTime() - t0) / 1e9, s.name))
@@ -183,7 +189,7 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
                     phase = Phase.RESULT
                 }
                 if (timing) android.util.Log.i("ApertureIQ", "STAGE %6.1f s  DONE".format(java.util.Locale.US, (System.nanoTime() - t0) / 1e9))
-                if (timing) android.util.Log.i("ApertureIQ", "TIME in networks: ${Engine.networks?.stats()}")
+                if (timing) android.util.Log.i("ApertureIQ", "TIME ${com.mosaiclens.apertureiq.judge.Prof.dump()}")
                 onDone(true)
             } catch (e: CancellationException) {
                 pending = false
