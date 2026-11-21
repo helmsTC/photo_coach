@@ -170,7 +170,6 @@ object Engine {
     @Volatile var networks: OrtNetworks? = null
         private set
 
-    /** Runtime settings chosen from measurements on a mid-range tablet (see android/README.md). */
     /**
      * Runtime settings, from measurements on a mid-range tablet (MT8781: 2 fast + 6 slow cores); see android/README.md.
      *  - threads: the models only gain from the fast cores (2, 4 and 8 threads took the same time alone,
@@ -230,7 +229,15 @@ object Engine {
         val nnapi = prop("nnapi", TUNING.nnapi)
         android.util.Log.i("ApertureIQ", "TIME nnapi mask $nnapi (1 encoder, 2 segmenter, 4 detector; same bits for xnnpack)")
         val bit = mapOf("encoder" to 1, "segmenter" to 2, "ai_detector" to 4)
-        val nets = OrtNetworks({ name -> map(ctx, "$name.onnx") }, seg, threads) { name, o ->
+        // debug builds: a model placed in files/override/ replaces the bundled one, to try a variant on a device
+        fun model(name: String): Any? {
+            if (com.mosaiclens.apertureiq.BuildConfig.DEBUG) {
+                val f = java.io.File(ctx.filesDir, "override/$name.onnx")
+                if (f.canRead()) { android.util.Log.i("ApertureIQ", "TIME using override ${f.name}"); return f.absolutePath }
+            }
+            return map(ctx, "$name.onnx")
+        }
+        val nets = OrtNetworks(::model, seg, threads) { name, o ->
             val b = bit[name] ?: 0
             if (arena == 0) o.setCPUArenaAllocator(false)
             if (xnn and b != 0) runCatching { o.addXnnpack(mapOf("intra_op_num_threads" to threads.toString())) }

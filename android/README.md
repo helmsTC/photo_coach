@@ -111,6 +111,8 @@ What changed, none of it altering results (the JVM tests give the same numbers):
 - **Stages run side by side.** The networks keep the fast cores; measuring, scene matching, object painting and overlays run on a low-priority pool. Each network has its own lock, so the segmenter and the encoder can overlap. The eight per-photo measurements also run in parallel.
 - **Runtime settings** (`Engine.kt`, with the measurements in a comment): one model thread per fast core, ONNX Runtime's memory pool off, no XNNPACK, no NNAPI.
 
+Also measured and rejected: the encoder in 16-bit arithmetic (no faster on this chip). A debug build loads `files/override/<name>.onnx` in place of a bundled model, which is how that was tried.
+
 What is left is mostly network time on the two fast cores: about 20 s of encoder (107-123 images at 0.2 s) and 11 s of segmenter when run alone.
 
 Self-test passes on the device. Debug builds log `STAGE` and `TIME` lines (per stage, per step, per network) under the logcat tag `ApertureIQ`, and read `adb shell setprop debug.aiq.threads|xnn|nnapi|arena|cpuprio|warm <n>` so settings can be tried without rebuilding (`xnn` and `nnapi` are bit masks: 1 encoder, 2 segmenter, 4 detector).
