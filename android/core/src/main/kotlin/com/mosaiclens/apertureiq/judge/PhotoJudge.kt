@@ -137,9 +137,14 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
         // painting out is plain CPU work, so the objects are prepared side by side, then embedded in batches
         val views = segs.parallelStream().map { ImagePrep.views(Objects.remove(p.std, it), info.inputSize) }.collect(java.util.stream.Collectors.toList())
         check()
-        val e = nets.embed(views.flatten())
+        // A detail crop the object does not reach is pixel-for-pixel the original crop, whose embedding
+        // we already have: only the views that actually changed go through the encoder.
+        val orig = ImagePrep.views(p.std, info.inputSize)
+        val todo = ArrayList<RGBImage>()
+        val slot = views.map { v -> IntArray(5) { i -> if (i > 0 && v[i].data.contentEquals(orig[i].data)) -1 else { todo.add(v[i]); todo.size - 1 } } }
+        val e = nets.embed(todo)
         for ((k, s) in segs.withIndex()) {
-            val r = nets.tower(e[k * 5], e.subList(k * 5 + 1, k * 5 + 5), hv)
+            val r = nets.tower(e[slot[k][0]], (1..4).map { i -> if (slot[k][i] < 0) p.l[i - 1] else e[slot[k][i]] }, hv)
             s.delta = info.percentile(r[ia], ia) - p.percentile[ia]
             s.lean = (p.raw[ia] - r[ia]) / info.heads[ia].refStd
         }

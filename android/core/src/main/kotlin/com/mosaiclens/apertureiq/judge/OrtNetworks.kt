@@ -32,6 +32,17 @@ class OrtNetworks(
     private val configure: (OrtSession.SessionOptions) -> Unit = {},
 ) : Networks, AutoCloseable {
 
+    /** Time spent inside each network since the last [resetStats] (for profiling on a device).
+     *  Declared before the sessions: loading them is timed too. */
+    private val nanos = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val calls = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private inline fun <T> timed(name: String, n: Int, body: () -> T): T {
+        val t0 = System.nanoTime()
+        try { return body() } finally { nanos.merge(name, System.nanoTime() - t0, Long::plus); calls.merge(name, n, Int::plus) }
+    }
+    fun resetStats() { nanos.clear(); calls.clear() }
+    fun stats(): String = nanos.keys.sorted().joinToString(", ") { "$it ${"%.1f".format(java.util.Locale.US, nanos[it]!! / 1e9)} s / ${calls[it]}" }
+
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val encoder: OrtSession = open("encoder", true) ?: throw JudgeError.MissingResource("encoder.onnx")
     private val towerNet: OrtSession = open("tower", false) ?: throw JudgeError.MissingResource("tower.onnx")
@@ -40,7 +51,9 @@ class OrtNetworks(
     private var segTried = false
     private var detTried = false
 
-    private fun open(name: String, accelerated: Boolean): OrtSession? {
+    private fun open(name: String, accelerated: Boolean): OrtSession? = timed("load $name", 1) { open0(name, accelerated) }
+
+    private fun open0(name: String, accelerated: Boolean): OrtSession? {
         val src = source(name) ?: return null
         val opts = OrtSession.SessionOptions()
         opts.setIntraOpNumThreads(threads)
@@ -78,7 +91,7 @@ class OrtNetworks(
         // modest batches keep peak memory flat on phones
         for (chunk in views.chunked(8)) {
             nchw(chunk).use { x ->
-                encoder.run(mapOf("image" to x)).use { res ->
+                timed("encoder", chunk.size) { encoder.run(mapOf("image" to x)) }.use { res ->
                     val fb = (res[0] as OnnxTensor).floatBuffer
                     val dim = fb.remaining() / chunk.size
                     for (i in chunk.indices) { val e = FloatArray(dim); fb.get(e); out.add(e) }
@@ -96,7 +109,7 @@ class OrtNetworks(
         OnnxTensor.createTensor(env, FloatBuffer.wrap(g), longArrayOf(1, dim.toLong())).use { tg ->
             OnnxTensor.createTensor(env, FloatBuffer.wrap(lf), longArrayOf(1, 4, dim.toLong())).use { tl ->
                 OnnxTensor.createTensor(env, FloatBuffer.wrap(h), longArrayOf(1, h.size.toLong())).use { th ->
-                    towerNet.run(mapOf("g" to tg, "l" to tl, "h" to th)).use { res ->
+                    timed("tower", 1) { towerNet.run(mapOf("g" to tg, "l" to tl, "h" to th)) }.use { res ->
                         val fb = (res[0] as OnnxTensor).floatBuffer
                         return DoubleArray(fb.remaining()) { fb.get().toDouble() }
                     }
@@ -123,7 +136,7 @@ class OrtNetworks(
                 override fun classMap(square: RGBImage): IntArray? = synchronized(this@OrtNetworks) {
                     try {
                         nchw(listOf(square)).use { x ->
-                            net.run(mapOf("image" to x)).use { res ->
+                            timed("segmenter", 1) { net.run(mapOf("image" to x)) }.use { res ->
                                 val ib = (res[0] as OnnxTensor).intBuffer
                                 IntArray(ib.remaining()).also { ib.get(it) }
                             }
@@ -144,7 +157,7 @@ class OrtNetworks(
         val net = detNet ?: return null
         val s = DetectorInput.crop.toLong()
         OnnxTensor.createTensor(env, FloatBuffer.wrap(chw), longArrayOf(1, 3, s, s)).use { x ->
-            net.run(mapOf("image" to x)).use { res ->
+            timed("detector", 1) { net.run(mapOf("image" to x)) }.use { res ->
                 return (res[0] as OnnxTensor).floatBuffer.get(0).toDouble()
             }
         }

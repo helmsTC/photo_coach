@@ -167,13 +167,36 @@ object Engine {
         null
     }
 
+    @Volatile var networks: OrtNetworks? = null
+        private set
+
+    /** Runtime settings chosen from measurements on a mid-range tablet (see android/README.md). */
+    private object TUNING {
+        const val threads = 4      // 2 and 8 were no faster on a 2 big + 6 little core tablet
+        const val xnnpack = 0      // 1/3 faster segmenter, but a slower AI detector and 1.4 GB more memory
+        const val arena = 0        // ONNX Runtime's memory pool held 2.5 GB after a Pro comparison; without it 0.66 GB, same speed
+    }
+
     @Synchronized
     fun judge(context: Context): PhotoJudge {
         judge?.let { return it }
         val ctx = context.applicationContext
         val info = JudgeInfo.parse(asset(ctx, "judge.json")?.decodeToString() ?: throw JudgeError.MissingResource("judge.json"))
         val seg = asset(ctx, "segmenter.json")?.decodeToString()?.let { SegmenterLabels.parse(it) }
-        val nets = OrtNetworks({ name -> map(ctx, "$name.onnx") }, seg)
+        // debug builds: `adb shell setprop debug.aiq.threads 2` etc. to try runtime settings on a device
+        fun prop(k: String, d: Int): Int = if (!com.mosaiclens.apertureiq.BuildConfig.DEBUG) d else runCatching {
+            Class.forName("android.os.SystemProperties").getMethod("getInt", String::class.java, Int::class.java).invoke(null, "debug.aiq.$k", d) as Int
+        }.getOrDefault(d)
+        val threads = prop("threads", TUNING.threads)
+        val xnn = prop("xnn", TUNING.xnnpack)
+        val arena = prop("arena", TUNING.arena)
+        android.util.Log.i("ApertureIQ", "TIME runtime: threads $threads, xnnpack $xnn, arena $arena")
+        val nets = OrtNetworks({ name -> map(ctx, "$name.onnx") }, seg, threads) { o ->
+            if (arena == 0) o.setCPUArenaAllocator(false)
+            if (xnn == 1) runCatching { o.addXnnpack(mapOf("intra_op_num_threads" to threads.toString())) }
+                .onFailure { android.util.Log.i("ApertureIQ", "TIME xnnpack unavailable: $it") }
+        }
+        networks = nets
         return PhotoJudge(info, nets, AndroidDecoder).also { judge = it }
     }
 }

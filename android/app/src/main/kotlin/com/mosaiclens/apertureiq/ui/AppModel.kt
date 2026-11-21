@@ -151,7 +151,13 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
         val knownNow = known
         job = viewModelScope.launch {
             try {
-                val progress: (Stage) -> Unit = { s -> viewModelScope.launch(Dispatchers.Main.immediate) { if (phase == Phase.ANALYZING) stage = s } }
+                val t0 = System.nanoTime()
+                Engine.networks?.resetStats()
+                val timing = com.mosaiclens.apertureiq.BuildConfig.DEBUG
+                val progress: (Stage) -> Unit = { s ->
+                    if (timing) android.util.Log.i("ApertureIQ", "STAGE %6.1f s  %s".format(java.util.Locale.US, (System.nanoTime() - t0) / 1e9, s.name))
+                    viewModelScope.launch(Dispatchers.Main.immediate) { if (phase == Phase.ANALYZING) stage = s }
+                }
                 if (free) {
                     val v = withContext(Dispatchers.Default) {
                         Engine.judge(app).quickVerdict(a, b, knownNow, progress) { ensureActive() }
@@ -167,6 +173,8 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
                     remember(a, b, r.winnerIndex, r.confidence, r.extras.map { it.authenticity ?: Authenticity.decide(null, null, null) })
                     phase = Phase.RESULT
                 }
+                if (timing) android.util.Log.i("ApertureIQ", "STAGE %6.1f s  DONE".format(java.util.Locale.US, (System.nanoTime() - t0) / 1e9))
+                if (timing) android.util.Log.i("ApertureIQ", "TIME in networks: ${Engine.networks?.stats()}")
                 onDone(true)
             } catch (e: CancellationException) {
                 phase = Phase.PICKING

@@ -118,6 +118,12 @@ fun BackPill(onClick: () -> Unit) {
 @Composable
 fun AnalyzingView(model: AppModel) {
     BackHandler { model.cancel() }
+    // a Pro comparison can outlast the screen timeout; don't let the device sleep in the middle of it
+    val view = LocalView.current
+    androidx.compose.runtime.DisposableEffect(view) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
+    }
     val current = model.stage?.ordinal ?: -1
     val progress by animateFloatAsState((current + 1f) / model.stages.size, tween(300), label = "progress")
     Box(Modifier.fillMaxSize()) {

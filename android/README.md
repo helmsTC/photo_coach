@@ -37,6 +37,8 @@ What the desktop tests cannot cover is the Android-only code: decoding photos wi
 
 In a debug build, tap **⋯ > Run self-test** on the home screen. It runs the same parity check on the device, through Android's own image decoder. One of the two test photos carries a colour profile, so this is also the check that pixel values reach the network unconverted (see `platform/Engine.kt`). Results also go to logcat under the tag `ApertureIQ`.
 
+The two headline scores must be within 3 percentile points of the reference; the other attributes are allowed 8. Android's JPEG decoder produces pixels a fraction of a level different from the reference decoder (PIL), and that alone moves the less stable attributes by up to about 6 points. Verified on a TCL NXTPAPER 11 Plus (Android 15): the PyTorch model given the tablet's decoded pixels reproduces the app's numbers exactly. Debug builds save those pixels as `files/selftest_<name>.rgb` for this check.
+
 ## What is in the app
 
 | Path | Role |
@@ -91,6 +93,16 @@ Same as iOS: **Free** shows which shot wins (read, measure, score and AI-check s
 
 - **Shipping:** create a one-time (non-consumable) in-app product with that ID in the Play Console and upload a signed build to at least the internal testing track. Play only returns products for an app it knows, installed from Play or by a licence tester.
 - **Debug builds without Play:** when Play has no product to offer, the button reads "Unlock Pro (debug build)" and grants Pro locally. Release builds never do this.
+
+## Measured on a device
+
+TCL NXTPAPER 11 Plus (MediaTek MT8781, 2 big + 6 little cores, 8 GB, Android 15), debug build:
+
+- Self-test passes. Scoring one photo takes about 5 s the first time (4.6 s of that is loading the encoder).
+- A full Pro comparison takes 75-85 s: about 30 s in the encoder (roughly 110-120 images at 0.25 s each), 11 s in the segmenter (5.6 s per photo), 9 s loading models (first comparison only) and about 25 s of measuring, matching and rendering in Kotlin.
+- Native memory after a Pro comparison is 0.66 GB. With ONNX Runtime's memory pool left on it was 2.5 GB, so `Engine.kt` turns it off; the comments there record the thread and XNNPACK measurements too.
+
+Debug builds log `STAGE` and `TIME` lines under the logcat tag `ApertureIQ`, and read `adb shell setprop debug.aiq.threads|xnn|arena <n>` so runtime settings can be tried without rebuilding.
 
 ## Debug launch options
 
