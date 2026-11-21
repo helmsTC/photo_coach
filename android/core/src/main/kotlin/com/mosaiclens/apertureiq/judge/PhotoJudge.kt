@@ -208,6 +208,9 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
     fun compare(
         bytesA: ByteArray, bytesB: ByteArray, nameA: String, nameB: String, known: List<Authenticity>? = null,
         progress: (Stage) -> Unit = {}, check: () -> Unit = {},
+        /** Receives the verdict as soon as it is known (scores, attributes, AI check), before the slow
+         *  parts - objects, attention, edit previews and the coaching built on them - are worked out. */
+        early: (Comparison) -> Unit = {},
     ): Comparison {
         val t0 = System.nanoTime()
         progress(Stage.READING)
@@ -235,8 +238,13 @@ class PhotoJudge(val info: JudgeInfo, private val nets: Networks, private val de
         val au = authenticity(bytesA, dA, bytesB, dB, known)
         check()
 
-        progress(Stage.MATCHING)
         val sim = cosine(a.g, b.g)
+        early(Coach.build(
+            Coach.Input(info, photos, w, l, null, null, if (sim >= similarScene) "similar" else "different", listOf(Pair(emptyList(), null), Pair(emptyList(), null))),
+            pa, listOf(PhotoExtras(authenticity = au[0]), PhotoExtras(authenticity = au[1])), sim, emptyList(), (System.nanoTime() - t0) / 1e9,
+        ))
+
+        progress(Stage.MATCHING)
         val al = SceneMatch.align(stdA, stdB)
         val relation = if (al.aligned) "aligned" else if (sim >= similarScene) "similar" else "different"
         var frame: Framing? = null

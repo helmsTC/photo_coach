@@ -109,6 +109,10 @@ import com.mosaiclens.apertureiq.judge.Preview
 import com.mosaiclens.apertureiq.judge.Reason
 import com.mosaiclens.apertureiq.judge.Authenticity
 import com.mosaiclens.apertureiq.judge.Swatch
+import com.mosaiclens.apertureiq.judge.Stage
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material.icons.filled.CheckCircle
 import com.mosaiclens.apertureiq.judge.usf
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -123,19 +127,28 @@ enum class ResultTab(val title: String, val icon: ImageVector) {
     INSPECT("Inspect", Icons.Filled.Visibility),
     COACH("Coach", Icons.Filled.School),
     SCORES("Scores", Icons.Filled.BarChart),
-    AI("AI check", Icons.Filled.ImageSearch),
+    AI("AI check", Icons.Filled.ImageSearch);
+
+    /** Needs the slow part of the analysis; shows a progress list until it arrives. */
+    val late: Boolean get() = this == INSPECT || this == COACH
 }
 
 @Composable
-fun ResultScreen(r: Comparison, debug: DebugOptions, onNew: () -> Unit) {
+fun ResultScreen(r: Comparison, debug: DebugOptions, working: Stage? = null, onNew: () -> Unit) {
+    // `working` is the stage still running when the verdict is shown early; null once everything is in.
+    val pending = working != null
     BackHandler(onBack = onNew)
     val view = LocalView.current
+    DisposableEffect(view, pending) {
+        view.keepScreenOn = pending
+        onDispose { view.keepScreenOn = false }
+    }
     val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf(ResultTab.entries.firstOrNull { it.name.equals(debug.tab, true) } ?: if (debug.lens != null) ResultTab.INSPECT else ResultTab.OVERVIEW) }
     var inspectPhoto by remember { mutableIntStateOf(debug.photo ?: r.loserIndex) }
     var lens by remember { mutableStateOf(Lens.entries.firstOrNull { it.name.equals(debug.lens, true) } ?: Lens.PHOTO) }
     var detailsPhoto by remember { mutableIntStateOf(debug.photo ?: r.loserIndex) }
-    var expanded by remember { mutableStateOf(if (debug.expandAll) r.coaching.map { it.id }.toSet() else emptySet()) }
+    var expanded by remember(pending) { mutableStateOf(if (debug.expandAll) r.coaching.map { it.id }.toSet() else emptySet()) }
     var detailsY by remember { mutableFloatStateOf(0f) }
     var jumpToDetails by remember { mutableStateOf(false) }
     val go: (ResultTab) -> Unit = { t -> Theme.tick(view); tab = t }
@@ -147,10 +160,13 @@ fun ResultScreen(r: Comparison, debug: DebugOptions, onNew: () -> Unit) {
             Row(Modifier.padding(horizontal = 18.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 BackPill(onNew)
                 Spacer(Modifier.weight(1f))
-                Text(
-                    usf("%.1fs on device", r.seconds), style = Type.caption.w(FontWeight.Medium), color = Theme.dim,
-                    modifier = Modifier.background(Color.White.copy(alpha = 0.1f), CircleShape).padding(horizontal = 10.dp, vertical = 6.dp),
-                )
+                Row(
+                    Modifier.background(Color.White.copy(alpha = 0.1f), CircleShape).padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (pending) CircularProgressIndicator(Modifier.size(11.dp), color = Theme.dim, strokeWidth = 1.5.dp)
+                    Text(if (pending) "Still analysing" else usf("%.1fs on device", r.seconds), style = Type.caption.w(FontWeight.Medium), color = Theme.dim)
+                }
             }
             Row(
                 Modifier.padding(horizontal = 18.dp, vertical = 8.dp).fillMaxWidth().background(Color.White.copy(alpha = 0.08f), CircleShape)
@@ -164,7 +180,8 @@ fun ResultScreen(r: Comparison, debug: DebugOptions, onNew: () -> Unit) {
                             Modifier.fillMaxWidth().clip(CircleShape).then(if (sel) Modifier.background(Theme.cta) else Modifier).clickable { go(t) }.padding(vertical = 7.dp),
                             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp),
                         ) {
-                            Icon(t.icon, null, Modifier.size(16.dp), tint = if (sel) Color.White else Theme.dim)
+                            if (pending && t.late) CircularProgressIndicator(Modifier.size(16.dp).padding(1.dp), color = if (sel) Color.White else Theme.dim, strokeWidth = 2.dp)
+                            else Icon(t.icon, null, Modifier.size(16.dp), tint = if (sel) Color.White else Theme.dim)
                             Text(t.title, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (sel) Color.White else Theme.dim, maxLines = 1, lineHeight = 12.sp)
                         }
                         if (t == ResultTab.AI && r.extras.any { it.authenticity?.isAI == true }) {
@@ -185,8 +202,8 @@ fun ResultScreen(r: Comparison, debug: DebugOptions, onNew: () -> Unit) {
                     Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 18.dp).padding(top = 8.dp, bottom = 40.dp).navigationBarsPadding(),
                     verticalArrangement = Arrangement.spacedBy(if (t == ResultTab.OVERVIEW) 22.dp else 30.dp),
                 ) {
-                    when (t) {
-                        ResultTab.OVERVIEW -> OverviewTab(r, go)
+                    if (working != null && t.late) StillWorking(t, working) else when (t) {
+                        ResultTab.OVERVIEW -> OverviewTab(r, go, pending)
                         ResultTab.INSPECT -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                             SectionHeader("Inspect", "Switch lenses to see what the analysis sees.", Icons.Filled.Visibility)
                             Inspector(r, inspectPhoto, lens, { inspectPhoto = it }, { lens = it })
@@ -237,8 +254,34 @@ fun ResultScreen(r: Comparison, debug: DebugOptions, onNew: () -> Unit) {
 // ---- overview
 
 /** The headline result at a glance, with tiles that lead into the other tabs. */
+/** Shown in place of a tab whose content depends on the slow part of the analysis. */
 @Composable
-fun OverviewTab(r: Comparison, go: (ResultTab) -> Unit) {
+fun StillWorking(tab: ResultTab, stage: Stage) {
+    val late = Stage.entries.filter { it.ordinal >= Stage.MATCHING.ordinal }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        SectionHeader(
+            if (tab == ResultTab.COACH) "Your coaching plan" else "Inspect",
+            "The verdict is in. This part takes longer: it tests every object in both photos.", if (tab == ResultTab.COACH) Icons.Filled.School else Icons.Filled.Visibility,
+        )
+        Column(Modifier.fillMaxWidth().glassCard(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            for (s in late) {
+                val done = s.ordinal < stage.ordinal
+                val now = s == stage || (s == Stage.OBJECTS && stage == Stage.TESTING)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                        if (done && !now) Icon(Icons.Filled.CheckCircle, null, Modifier.size(18.dp), tint = Theme.good)
+                        else if (now) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                        else Box(Modifier.size(8.dp).background(Color.White.copy(alpha = 0.25f), CircleShape))
+                    }
+                    Text(s.title, style = Type.subheadline, color = if (done || now) Color.White else Theme.dim)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun OverviewTab(r: Comparison, go: (ResultTab) -> Unit, pending: Boolean = false) {
     val wi = r.winnerIndex
     // hero
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -293,7 +336,7 @@ fun OverviewTab(r: Comparison, go: (ResultTab) -> Unit) {
 
     // tiles
     val tiles = ArrayList<@Composable (Modifier) -> Unit>()
-    r.coaching.firstOrNull()?.let { first ->
+    if (!pending) r.coaching.firstOrNull()?.let { first ->
         val n = r.coaching.size
         tiles.add { m -> Tile(Theme.itemIcon(first.id), Theme.fixStyle(first.fix).color, "TOP FIX", first.title, "$n step${if (n == 1) "" else "s"} in your plan", m) { go(ResultTab.COACH) } }
     }
@@ -314,7 +357,10 @@ fun OverviewTab(r: Comparison, go: (ResultTab) -> Unit) {
     tiles.add { m -> Tile(Icons.Filled.ImageSearch, if (flagged.isEmpty()) Theme.good else Theme.bad, "AI CHECK", aiTitle, aiFooter, m) { go(ResultTab.AI) } }
     val relIcon = if (r.relation == "aligned") Icons.Filled.FlipToFront else if (r.relation == "similar") Icons.Filled.Compare else Icons.Filled.ViewAgenda
     val relTitle = if (r.relation == "aligned") "Same scene" else if (r.relation == "similar") "Similar subject" else "Different scenes"
-    tiles.add { m ->
+    if (pending) tiles.add(0) { m ->
+        Tile(Icons.Filled.School, Theme.violet, "COACHING", "Being written", "Objects, attention and edits are still running", m) { go(ResultTab.COACH) }
+    }
+    if (!pending) tiles.add { m ->
         Tile(relIcon, Theme.violet, "THE SCENES", relTitle, if (r.relation == "aligned") "Framing compared directly" else "Judged on their own merits", m) { go(ResultTab.INSPECT) }
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

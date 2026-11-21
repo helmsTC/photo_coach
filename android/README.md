@@ -100,6 +100,7 @@ TCL NXTPAPER 11 Plus (MediaTek MT8781, 2 big + 6 little cores, 8 GB, Android 15)
 
 - Self-test passes. Scoring one photo takes about 5 s the first time (4.6 s of that is loading the encoder).
 - A full Pro comparison takes 75-85 s: about 30 s in the encoder (roughly 110-120 images at 0.25 s each), 11 s in the segmenter (5.6 s per photo), 9 s loading models (first comparison only) and about 25 s of measuring, matching and rendering in Kotlin.
+- The verdict is shown as soon as it is known, about 16 s in (`early` callback of `PhotoJudge.compare`). Overview, Scores and AI check are complete at that point; Inspect and Coach show a progress list until the object, attention and edit stages finish. Nothing about the analysis itself changes.
 - Native memory after a Pro comparison is 0.66 GB. With ONNX Runtime's memory pool left on it was 2.5 GB, so `Engine.kt` turns it off; the comments there record the thread and XNNPACK measurements too.
 
 Debug builds log `STAGE` and `TIME` lines under the logcat tag `ApertureIQ`, and read `adb shell setprop debug.aiq.threads|xnn|arena <n>` so runtime settings can be tried without rebuilding.

@@ -66,6 +66,8 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
     var stage by mutableStateOf<Stage?>(null); private set
     var error by mutableStateOf<String?>(null)
     var result by mutableStateOf<Comparison?>(null); private set
+    /** The verdict is on screen while the slower Pro sections (objects, attention, coaching) are still being worked out. */
+    var pending by mutableStateOf(false); private set
     var quick by mutableStateOf<QuickVerdict?>(null); private set
 
     /** The saved entry being shown, so a re-run updates it instead of adding a duplicate. */
@@ -156,7 +158,7 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
                 val timing = com.mosaiclens.apertureiq.BuildConfig.DEBUG
                 val progress: (Stage) -> Unit = { s ->
                     if (timing) android.util.Log.i("ApertureIQ", "STAGE %6.1f s  %s".format(java.util.Locale.US, (System.nanoTime() - t0) / 1e9, s.name))
-                    viewModelScope.launch(Dispatchers.Main.immediate) { if (phase == Phase.ANALYZING) stage = s }
+                    viewModelScope.launch(Dispatchers.Main.immediate) { if (phase == Phase.ANALYZING || pending) stage = s }
                 }
                 if (free) {
                     val v = withContext(Dispatchers.Default) {
@@ -166,10 +168,17 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
                     remember(a, b, v.winnerIndex, v.confidence, v.authenticity)
                     phase = Phase.VERDICT
                 } else {
+                    val early: (Comparison) -> Unit = { first ->
+                        if (timing) android.util.Log.i("ApertureIQ", "STAGE %6.1f s  VERDICT SHOWN".format(java.util.Locale.US, (System.nanoTime() - t0) / 1e9))
+                        viewModelScope.launch(Dispatchers.Main.immediate) {
+                            if (phase == Phase.ANALYZING && job?.isActive == true) { result = first; pending = true; phase = Phase.RESULT }
+                        }
+                    }
                     val r = withContext(Dispatchers.Default) {
-                        Engine.judge(app).compare(a, b, "Shot A", "Shot B", knownNow, progress) { ensureActive() }
+                        Engine.judge(app).compare(a, b, "Shot A", "Shot B", knownNow, progress, { ensureActive() }, early)
                     }
                     result = r
+                    pending = false
                     remember(a, b, r.winnerIndex, r.confidence, r.extras.map { it.authenticity ?: Authenticity.decide(null, null, null) })
                     phase = Phase.RESULT
                 }
@@ -177,9 +186,12 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
                 if (timing) android.util.Log.i("ApertureIQ", "TIME in networks: ${Engine.networks?.stats()}")
                 onDone(true)
             } catch (e: CancellationException) {
+                pending = false
                 phase = Phase.PICKING
                 throw e
             } catch (e: Throwable) {
+                pending = false
+                result = null
                 error = if (e is OutOfMemoryError) "Not enough memory to analyse these photos." else (e.localizedMessage ?: "Something went wrong.")
                 phase = Phase.PICKING
                 onDone(false)
@@ -189,10 +201,12 @@ class AppModel(private val app: Application) : AndroidViewModel(app) {
 
     fun cancel() {
         job?.cancel()
+        pending = false
         phase = Phase.PICKING
     }
 
     fun newComparison() {
+        if (pending) { job?.cancel(); pending = false }
         phase = Phase.PICKING
         result = null
         quick = null

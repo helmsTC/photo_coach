@@ -89,6 +89,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mosaiclens.apertureiq.judge.Stage
 import com.mosaiclens.apertureiq.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -107,7 +108,7 @@ fun RootView(model: AppModel) {
             when (phase) {
                 Phase.PICKING -> HomeView(model) { paywall = true }
                 Phase.ANALYZING -> AnalyzingView(model)
-                Phase.RESULT -> model.result?.let { ResultScreen(it, model.debug) { model.newComparison() } }
+                Phase.RESULT -> model.result?.let { ResultScreen(it, model.debug, if (model.pending) model.stage ?: Stage.MATCHING else null) { model.newComparison() } }
                 Phase.VERDICT -> model.quick?.let { VerdictView(it, onNew = { model.newComparison() }, onUpgrade = { paywall = true }) }
             }
         }
